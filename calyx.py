@@ -880,11 +880,8 @@ async def poll_glass_journal():
             
             if page_id != last_processed_id:
                 # Safely extract title
-                title_array = latest_page["properties"]["Name"]["title"]
-                if title_array and len(title_array) > 0:
-                    title = title_array[0]["plain_text"]
-                else:
-                    title = "Untitled"
+                props = latest_page["properties"]
+                title = safe_get_notion_property(props, "Name", "title", "Untitled")
                 
                 url = f"https://www.notion.so/{page_id.replace('-', '')}"
                 
