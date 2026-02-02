@@ -5,15 +5,19 @@ Writes Discord activity to Vessel Framework databases
 
 import os
 from datetime import datetime
+from dotenv import load_dotenv
 from notion_client import Client
+
+# Load environment variables
+load_dotenv()
 
 # Initialize Notion client
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
 
-# Database IDs from Notion
-TASK_BOARD_ID = "5940340de126424e801c85baf87765ea"
-TRACE_LOGS_ID = "7e61b65260ad4c07ae2eb14987ddcdec"
-AGENT_HEALTH_ID = "62ed0fc6c10344a7b941a271c7bf1518"
+# Database IDs from environment variables
+TASK_BOARD_ID = os.getenv("NOTION_TASK_BOARD_ID")
+TRACE_LOGS_ID = os.getenv("NOTION_TRACE_LOG_ID")
+AGENT_HEALTH_ID = os.getenv("NOTION_AGENT_HEALTH_ID")
 
 
 async def log_trace(

@@ -1190,11 +1190,11 @@ async def status(interaction: discord.Interaction):
                 .get("content", "Unknown")
             )
             agent_status = (
-                props.get("Status", {}).get("select", {}).get("name", "Unknown")
+                (props.get("Status") or {}).get("select", {}).get("name", "Unknown")
             )
-            exec_count = props.get("Execution Count", {}).get("number", 0)
-            error_count = props.get("Error Count", {}).get("number", 0)
-            auth = props.get("Auth Status", {}).get("select", {}).get("name", "N/A")
+            exec_count = (props.get("Execution Count") or {}).get("number", 0)
+            error_count = (props.get("Error Count") or {}).get("number", 0)
+            auth = (props.get("Auth Status") or {}).get("select", {}).get("name", "N/A")
 
             status_emoji = {
                 "Active": "\U00002705",
