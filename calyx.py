@@ -88,14 +88,14 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
         if property_type == "title":
             # Title is an array of text objects
             title_array = prop.get("title", [])
-            if not title_array or len(title_array) == 0:
+            if not title_array:
                 return default
             return title_array[0].get("text", {}).get("content", default)
         
         elif property_type == "rich_text":
             # Rich text is an array of text objects
             rich_text_array = prop.get("rich_text", [])
-            if not rich_text_array or len(rich_text_array) == 0:
+            if not rich_text_array:
                 return default
             return rich_text_array[0].get("text", {}).get("content", default)
         
@@ -1180,8 +1180,6 @@ async def trace(interaction: discord.Interaction, trace_id: str):
         request = safe_get_notion_property(props, "Request Summary", "rich_text", "N/A")
         agents = safe_get_notion_property(props, "Agent Chain", "rich_text", "N/A")
         sources = safe_get_notion_property(props, "Data Sources Used", "multi_select", [])
-        if not isinstance(sources, list):
-            sources = []
         success = safe_get_notion_property(props, "Success", "checkbox", False)
         timestamp = safe_get_notion_property(props, "Timestamp", "date", "N/A")
         discord_link = props.get("Discord Link", {}).get("url", "")
