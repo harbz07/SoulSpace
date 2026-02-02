@@ -1242,7 +1242,7 @@ async def status(interaction: discord.Interaction):
             agent_status = safe_get_notion_property(props, "Status", "select", "Unknown")
             exec_count = safe_get_notion_property(props, "Execution Count", "number", 0)
             error_count = safe_get_notion_property(props, "Error Count", "number", 0)
-            auth = safe_get_notion_property(props, "Auth Status", "select", "N/A"
+            auth = safe_get_notion_property(props, "Auth Status", "select", "N/A")
 
             status_emoji = {
                 "Active": "\U00002705",
