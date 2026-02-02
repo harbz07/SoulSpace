@@ -39,6 +39,7 @@ NOTION_KNOWLEDGE_BASE_ID = os.getenv("NOTION_KNOWLEDGE_BASE_ID")
 NOTION_MEMORY_ARCHIVE_ID = os.getenv("NOTION_MEMORY_ARCHIVE_ID")
 NOTION_AGENT_HEALTH_ID = os.getenv("NOTION_AGENT_HEALTH_ID")
 NOTION_TRACE_LOG_ID = os.getenv("NOTION_TRACE_LOG_ID")
+# The Glass Journal - hardcoded per specification
 JOURNAL_DB_ID = "3978eb18cdc04c0590484b9051ea6571"
 
 # Initialize Notion client
@@ -770,6 +771,15 @@ async def on_message(message):
 async def poll_glass_journal():
     """Poll The Glass Journal database for new entries and broadcast to Discord."""
     global last_processed_id
+    
+    # Check if notion is configured
+    if not notion:
+        return
+    
+    # Check if channel is configured
+    if not CHANNEL_ENGINE_LOGS:
+        return
+    
     channel = bot.get_channel(int(CHANNEL_ENGINE_LOGS))
     if not channel:
         return
@@ -785,7 +795,13 @@ async def poll_glass_journal():
             page_id = latest_page["id"]
             
             if page_id != last_processed_id:
-                title = latest_page["properties"]["Name"]["title"][0]["plain_text"]
+                # Safely extract title
+                title_array = latest_page["properties"]["Name"]["title"]
+                if title_array and len(title_array) > 0:
+                    title = title_array[0]["plain_text"]
+                else:
+                    title = "Untitled"
+                
                 url = f"https://www.notion.so/{page_id.replace('-', '')}"
                 
                 message = f"**[SYSTEM LOG]** New entry detected in The Glass Journal:\n**{title}**\nView: {url}"
