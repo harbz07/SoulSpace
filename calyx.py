@@ -67,18 +67,29 @@ TOKEN_DIR = os.path.join(os.path.dirname(__file__), "tokens")
 os.makedirs(TOKEN_DIR, exist_ok=True)
 
 
+# =============================================================================
+# HELPER FUNCTIONS - Safe Notion Property Access
+# =============================================================================
+
+
 def safe_get_notion_property(props: dict, property_name: str, property_type: str, default=None):
     """
-    Safely extract Notion property values, handling None/missing/empty cases.
+    Safely extract a Notion property value, handling null/missing values.
     
     Args:
-        props: The properties dictionary from a Notion page
+        props: Properties dictionary from a Notion page
         property_name: Name of the property to extract
-        property_type: Type of property (title, rich_text, select, multi_select, number, checkbox, date, url)
+        property_type: Type of property (title, rich_text, select, multi_select, 
+                       number, checkbox, date, url)
         default: Default value to return if property is None, missing, or empty
     
     Returns:
-        The extracted value or default if extraction fails
+        Extracted property value or default. For unsupported property types, 
+        returns the default value.
+    
+    Note:
+        multi_select returns a list of non-empty names, filtering out null values.
+        This ensures consistent list handling even with sparse data.
     """
     try:
         prop = props.get(property_name)
@@ -86,62 +97,50 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
             return default
         
         if property_type == "title":
-            # Title is an array of text objects
             title_array = prop.get("title", [])
-            if not title_array:
-                return default
-            return title_array[0].get("text", {}).get("content", default)
+            if title_array and len(title_array) > 0:
+                return title_array[0].get("text", {}).get("content", default)
+            return default
         
         elif property_type == "rich_text":
-            # Rich text is an array of text objects
             rich_text_array = prop.get("rich_text", [])
-            if not rich_text_array:
-                return default
-            return rich_text_array[0].get("text", {}).get("content", default)
+            if rich_text_array and len(rich_text_array) > 0:
+                return rich_text_array[0].get("text", {}).get("content", default)
+            return default
         
         elif property_type == "select":
-            # Select is an object with a name
             select_obj = prop.get("select")
-            if select_obj is None:
-                return default
-            return select_obj.get("name", default)
+            if select_obj is not None:
+                return select_obj.get("name", default)
+            return default
         
         elif property_type == "multi_select":
-            # Multi-select is an array of objects with names
+            # Filter out items with null/empty names to maintain list consistency
             multi_select_array = prop.get("multi_select", [])
-            if not multi_select_array:
-                return default
-            return [item.get("name", "") for item in multi_select_array if item.get("name")]
+            return [item.get("name") for item in multi_select_array if item.get("name")]
         
         elif property_type == "number":
-            # Number is a direct value
-            number_val = prop.get("number")
-            if number_val is None:
-                return default
-            return number_val
+            num_value = prop.get("number")
+            return num_value if num_value is not None else default
         
         elif property_type == "checkbox":
-            # Checkbox is a boolean
-            checkbox_val = prop.get("checkbox")
-            if checkbox_val is None:
-                return default
-            return checkbox_val
+            check_value = prop.get("checkbox")
+            if check_value is not None:
+                return check_value
+            return default if default is not None else False
         
         elif property_type == "date":
-            # Date is an object with start/end
             date_obj = prop.get("date")
-            if date_obj is None:
-                return default
-            return date_obj.get("start", default)
+            if date_obj is not None:
+                return date_obj.get("start", default)
+            return default
         
         elif property_type == "url":
-            # URL is a direct string value
-            url_val = prop.get("url")
-            if url_val is None:
-                return default
-            return url_val
+            url_value = prop.get("url")
+            return url_value if url_value is not None else default
         
         else:
+            # Unsupported property type - return default
             return default
     
     except (KeyError, TypeError, IndexError, AttributeError):
@@ -332,13 +331,13 @@ async def update_agent_health(
             if increment_execution:
                 current_count = safe_get_notion_property(
                     current_props, "Execution Count", "number", 0
-                )
+                ) or 0
                 properties["Execution Count"] = {"number": current_count + 1}
 
             if increment_error:
                 current_errors = safe_get_notion_property(
                     current_props, "Error Count", "number", 0
-                )
+                ) or 0
                 properties["Error Count"] = {"number": current_errors + 1}
 
             notion.pages.update(page_id=page_id, properties=properties)
@@ -1182,7 +1181,7 @@ async def trace(interaction: discord.Interaction, trace_id: str):
         sources = safe_get_notion_property(props, "Data Sources Used", "multi_select", [])
         success = safe_get_notion_property(props, "Success", "checkbox", False)
         timestamp = safe_get_notion_property(props, "Timestamp", "date", "N/A")
-        discord_link = props.get("Discord Link", {}).get("url", "")
+        discord_link = safe_get_notion_property(props, "Discord Link", "url", "")
 
         embed = discord.Embed(
             title=f"Trace: {trace_id}",
