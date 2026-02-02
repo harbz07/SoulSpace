@@ -84,7 +84,12 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
         default: Default value to return if property is None, missing, or empty
     
     Returns:
-        Extracted property value or default
+        Extracted property value or default. For unsupported property types, 
+        returns the default value.
+    
+    Note:
+        multi_select returns a list of non-empty names, filtering out null values.
+        This ensures consistent list handling even with sparse data.
     """
     try:
         prop = props.get(property_name)
@@ -110,6 +115,7 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
             return default
         
         elif property_type == "multi_select":
+            # Filter out items with null/empty names to maintain list consistency
             multi_select_array = prop.get("multi_select", [])
             return [item.get("name") for item in multi_select_array if item.get("name")]
         
@@ -119,7 +125,9 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
         
         elif property_type == "checkbox":
             check_value = prop.get("checkbox")
-            return check_value if check_value is not None else (default if default is not None else False)
+            if check_value is not None:
+                return check_value
+            return default if default is not None else False
         
         elif property_type == "date":
             date_obj = prop.get("date")
@@ -132,6 +140,7 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
             return url_value if url_value is not None else default
         
         else:
+            # Unsupported property type - return default
             return default
     
     except (KeyError, TypeError, IndexError, AttributeError):
