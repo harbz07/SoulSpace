@@ -13,6 +13,7 @@ from discord.ui import Button, View
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from calyx_notion_integration import log_trace, create_task, update_agent_health
 
 # Google OAuth imports
 from google_auth_oauthlib.flow import Flow
@@ -730,6 +731,29 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
+
+@bot.event
+async def on_message(message):
+    # Ignore bot messages
+    if message.author.bot:
+        return
+    
+    # Log traces for messages in #the-well
+    if message.channel.name == "the-well":
+        trace_id = f"TRACE-{message.id}"
+        await log_trace(
+            trace_id=trace_id,
+            request_summary=message.content[:200],
+            agent_chain="tinyNature → Calyx",
+            data_sources=["Knowledge Base"],
+            discord_link=message.jump_url,
+            success=True
+        )
+    
+    # Log technical activity in #engine-logs
+    elif message.channel.name == "engine-logs":
+        # Parse structured logs here if needed
+        pass
 
 # =============================================================================
 # SLASH COMMANDS
