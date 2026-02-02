@@ -39,8 +39,8 @@ NOTION_KNOWLEDGE_BASE_ID = os.getenv("NOTION_KNOWLEDGE_BASE_ID")
 NOTION_MEMORY_ARCHIVE_ID = os.getenv("NOTION_MEMORY_ARCHIVE_ID")
 NOTION_AGENT_HEALTH_ID = os.getenv("NOTION_AGENT_HEALTH_ID")
 NOTION_TRACE_LOG_ID = os.getenv("NOTION_TRACE_LOG_ID")
-# The Glass Journal - hardcoded per specification
-JOURNAL_DB_ID = "3978eb18cdc04c0590484b9051ea6571"
+# The Glass Journal
+JOURNAL_DB_ID = os.getenv("JOURNAL_DB_ID")
 
 # Initialize Notion client
 notion = None
@@ -774,6 +774,10 @@ async def poll_glass_journal():
     
     # Check if notion is configured
     if not notion:
+        return
+    
+    # Check if JOURNAL_DB_ID is configured
+    if not JOURNAL_DB_ID:
         return
     
     # Check if channel is configured
