@@ -66,6 +66,87 @@ OAUTH_REDIRECT_URI = f"http://localhost:{OAUTH_REDIRECT_PORT}/callback"
 TOKEN_DIR = os.path.join(os.path.dirname(__file__), "tokens")
 os.makedirs(TOKEN_DIR, exist_ok=True)
 
+
+def safe_get_notion_property(props: dict, property_name: str, property_type: str, default=None):
+    """
+    Safely extract Notion property values, handling None/missing/empty cases.
+    
+    Args:
+        props: The properties dictionary from a Notion page
+        property_name: Name of the property to extract
+        property_type: Type of property (title, rich_text, select, multi_select, number, checkbox, date, url)
+        default: Default value to return if property is None, missing, or empty
+    
+    Returns:
+        The extracted value or default if extraction fails
+    """
+    try:
+        prop = props.get(property_name)
+        if prop is None:
+            return default
+        
+        if property_type == "title":
+            # Title is an array of text objects
+            title_array = prop.get("title", [])
+            if not title_array or len(title_array) == 0:
+                return default
+            return title_array[0].get("text", {}).get("content", default)
+        
+        elif property_type == "rich_text":
+            # Rich text is an array of text objects
+            rich_text_array = prop.get("rich_text", [])
+            if not rich_text_array or len(rich_text_array) == 0:
+                return default
+            return rich_text_array[0].get("text", {}).get("content", default)
+        
+        elif property_type == "select":
+            # Select is an object with a name
+            select_obj = prop.get("select")
+            if select_obj is None:
+                return default
+            return select_obj.get("name", default)
+        
+        elif property_type == "multi_select":
+            # Multi-select is an array of objects with names
+            multi_select_array = prop.get("multi_select", [])
+            if not multi_select_array:
+                return default
+            return [item.get("name", "") for item in multi_select_array if item.get("name")]
+        
+        elif property_type == "number":
+            # Number is a direct value
+            number_val = prop.get("number")
+            if number_val is None:
+                return default
+            return number_val
+        
+        elif property_type == "checkbox":
+            # Checkbox is a boolean
+            checkbox_val = prop.get("checkbox")
+            if checkbox_val is None:
+                return default
+            return checkbox_val
+        
+        elif property_type == "date":
+            # Date is an object with start/end
+            date_obj = prop.get("date")
+            if date_obj is None:
+                return default
+            return date_obj.get("start", default)
+        
+        elif property_type == "url":
+            # URL is a direct string value
+            url_val = prop.get("url")
+            if url_val is None:
+                return default
+            return url_val
+        
+        else:
+            return default
+    
+    except (KeyError, TypeError, IndexError, AttributeError):
+        return default
+
 # Google OAuth scopes for different services
 GOOGLE_SCOPES = {
     "gmail": [
@@ -249,14 +330,14 @@ async def update_agent_health(
             current_props = response["results"][0]["properties"]
 
             if increment_execution:
-                current_count = (
-                    current_props.get("Execution Count", {}).get("number", 0) or 0
+                current_count = safe_get_notion_property(
+                    current_props, "Execution Count", "number", 0
                 )
                 properties["Execution Count"] = {"number": current_count + 1}
 
             if increment_error:
-                current_errors = (
-                    current_props.get("Error Count", {}).get("number", 0) or 0
+                current_errors = safe_get_notion_property(
+                    current_props, "Error Count", "number", 0
                 )
                 properties["Error Count"] = {"number": current_errors + 1}
 
@@ -800,11 +881,8 @@ async def poll_glass_journal():
             
             if page_id != last_processed_id:
                 # Safely extract title
-                title_array = latest_page["properties"]["Name"]["title"]
-                if title_array and len(title_array) > 0:
-                    title = title_array[0]["plain_text"]
-                else:
-                    title = "Untitled"
+                props = latest_page["properties"]
+                title = safe_get_notion_property(props, "Name", "title", "Untitled")
                 
                 url = f"https://www.notion.so/{page_id.replace('-', '')}"
                 
@@ -1099,24 +1177,13 @@ async def trace(interaction: discord.Interaction, trace_id: str):
         props = trace_data["properties"]
 
         # Extract data from Notion properties
-        request = (
-            props.get("Request Summary", {})
-            .get("rich_text", [{}])[0]
-            .get("text", {})
-            .get("content", "N/A")
-        )
-        agents = (
-            props.get("Agent Chain", {})
-            .get("rich_text", [{}])[0]
-            .get("text", {})
-            .get("content", "N/A")
-        )
-        sources = [
-            s["name"]
-            for s in props.get("Data Sources Used", {}).get("multi_select", [])
-        ]
-        success = props.get("Success", {}).get("checkbox", False)
-        timestamp = props.get("Timestamp", {}).get("date", {}).get("start", "N/A")
+        request = safe_get_notion_property(props, "Request Summary", "rich_text", "N/A")
+        agents = safe_get_notion_property(props, "Agent Chain", "rich_text", "N/A")
+        sources = safe_get_notion_property(props, "Data Sources Used", "multi_select", [])
+        if not isinstance(sources, list):
+            sources = []
+        success = safe_get_notion_property(props, "Success", "checkbox", False)
+        timestamp = safe_get_notion_property(props, "Timestamp", "date", "N/A")
         discord_link = props.get("Discord Link", {}).get("url", "")
 
         embed = discord.Embed(
@@ -1183,18 +1250,11 @@ async def status(interaction: discord.Interaction):
     if agents:
         for agent in agents[:10]:  # Limit to 10 agents for embed
             props = agent["properties"]
-            name = (
-                props.get("Agent Name", {})
-                .get("title", [{}])[0]
-                .get("text", {})
-                .get("content", "Unknown")
-            )
-            agent_status = (
-                (props.get("Status") or {}).get("select", {}).get("name", "Unknown")
-            )
-            exec_count = (props.get("Execution Count") or {}).get("number", 0)
-            error_count = (props.get("Error Count") or {}).get("number", 0)
-            auth = (props.get("Auth Status") or {}).get("select", {}).get("name", "N/A")
+            name = safe_get_notion_property(props, "Agent Name", "title", "Unknown")
+            agent_status = safe_get_notion_property(props, "Status", "select", "Unknown")
+            exec_count = safe_get_notion_property(props, "Execution Count", "number", 0)
+            error_count = safe_get_notion_property(props, "Error Count", "number", 0)
+            auth = safe_get_notion_property(props, "Auth Status", "select", "N/A")
 
             status_emoji = {
                 "Active": "\U00002705",
@@ -1314,14 +1374,9 @@ async def purge(interaction: discord.Interaction, memory_id: str):
 
     # Extract memory details for preview
     props = memory["properties"]
-    mem_type = props.get("Type", {}).get("select", {}).get("name", "Unknown")
-    consent = props.get("Consent Status", {}).get("select", {}).get("name", "Unknown")
-    preview = (
-        props.get("Content Preview", {})
-        .get("rich_text", [{}])[0]
-        .get("text", {})
-        .get("content", "No preview available")
-    )
+    mem_type = safe_get_notion_property(props, "Type", "select", "Unknown")
+    consent = safe_get_notion_property(props, "Consent Status", "select", "Unknown")
+    preview = safe_get_notion_property(props, "Content Preview", "rich_text", "No preview available")
 
     embed = discord.Embed(
         title=f"Confirm Purge: {memory_id}",
