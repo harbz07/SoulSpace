@@ -114,10 +114,12 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
             return [item.get("name") for item in multi_select_array if item.get("name")]
         
         elif property_type == "number":
-            return prop.get("number", default)
+            num_value = prop.get("number")
+            return num_value if num_value is not None else default
         
         elif property_type == "checkbox":
-            return prop.get("checkbox", default if default is not None else False)
+            check_value = prop.get("checkbox")
+            return check_value if check_value is not None else (default if default is not None else False)
         
         elif property_type == "date":
             date_obj = prop.get("date")
@@ -126,7 +128,8 @@ def safe_get_notion_property(props: dict, property_name: str, property_type: str
             return default
         
         elif property_type == "url":
-            return prop.get("url", default)
+            url_value = prop.get("url")
+            return url_value if url_value is not None else default
         
         else:
             return default
