@@ -8,7 +8,7 @@ from functools import partial
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Button, View
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -39,6 +39,7 @@ NOTION_KNOWLEDGE_BASE_ID = os.getenv("NOTION_KNOWLEDGE_BASE_ID")
 NOTION_MEMORY_ARCHIVE_ID = os.getenv("NOTION_MEMORY_ARCHIVE_ID")
 NOTION_AGENT_HEALTH_ID = os.getenv("NOTION_AGENT_HEALTH_ID")
 NOTION_TRACE_LOG_ID = os.getenv("NOTION_TRACE_LOG_ID")
+JOURNAL_DB_ID = "3978eb18cdc04c0590484b9051ea6571"
 
 # Initialize Notion client
 notion = None
@@ -81,6 +82,7 @@ pending_oauth_flows = {}
 
 # Global state
 OPERATIONS_PAUSED = False
+last_processed_id = None
 
 # Channel type mapping
 CHANNEL_TYPES = {}
@@ -686,6 +688,11 @@ async def on_ready():
     # Update Calyx agent health
     await update_agent_health("Calyx", status="Active", increment_execution=True)
 
+    # Start the Glass Journal polling task
+    if notion and not poll_glass_journal.is_running():
+        poll_glass_journal.start()
+        print("Broadcast Protocol Active - polling The Glass Journal")
+
     # Post status to #the-mirror if configured
     if CHANNEL_THE_MIRROR:
         channel = bot.get_channel(int(CHANNEL_THE_MIRROR))
@@ -754,6 +761,38 @@ async def on_message(message):
     elif message.channel.name == "engine-logs":
         # Parse structured logs here if needed
         pass
+
+# =============================================================================
+# BROADCAST PULSE (Notion Journal Polling)
+# =============================================================================
+
+@tasks.loop(minutes=5)
+async def poll_glass_journal():
+    """Poll The Glass Journal database for new entries and broadcast to Discord."""
+    global last_processed_id
+    channel = bot.get_channel(int(CHANNEL_ENGINE_LOGS))
+    if not channel:
+        return
+    try:
+        res = notion.databases.query(
+            database_id=JOURNAL_DB_ID,
+            sorts=[{"timestamp": "created_time", "direction": "descending"}],
+            page_size=1
+        )
+
+        if res["results"]:
+            latest_page = res["results"][0]
+            page_id = latest_page["id"]
+            
+            if page_id != last_processed_id:
+                title = latest_page["properties"]["Name"]["title"][0]["plain_text"]
+                url = f"https://www.notion.so/{page_id.replace('-', '')}"
+                
+                message = f"**[SYSTEM LOG]** New entry detected in The Glass Journal:\n**{title}**\nView: {url}"
+                await channel.send(message)
+                last_processed_id = page_id
+    except Exception as e:
+        print(f"Broadcast Error: {e}")
 
 # =============================================================================
 # SLASH COMMANDS
