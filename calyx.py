@@ -808,7 +808,7 @@ async def poll_glass_journal():
                 await channel.send(message)
                 last_processed_id = page_id
     except Exception as e:
-        print(f"Broadcast Error: {e}")
+        print(f"Broadcast Error ({type(e).__name__}): {e}")
 
 # =============================================================================
 # SLASH COMMANDS
