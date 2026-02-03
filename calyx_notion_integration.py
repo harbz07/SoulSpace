@@ -172,7 +172,7 @@ async def update_agent_health(
         
         # Add error message if provided
         if last_error:
-            # Truncate to 2000 characters to avoid API limits
+            # Truncate to 2000 characters to avoid Notion API rich_text limits
             properties["Last Error Message"] = {
                 "rich_text": [{"text": {"content": last_error[:2000]}}]
             }
