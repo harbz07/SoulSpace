@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from calyx_notion_integration import log_trace, create_task, update_agent_health
+from health_server import HealthServer
 
 # Google OAuth imports
 from google_auth_oauthlib.flow import Flow
@@ -752,6 +753,9 @@ class CalyxBot(commands.Bot):
 
 bot = CalyxBot()
 
+# Global health server instance
+health_server = None
+
 
 # =============================================================================
 # VIEWS (for button confirmations)
@@ -819,12 +823,20 @@ class PurgeConfirmView(View):
 
 @bot.event
 async def on_ready():
+    global health_server
+    
     init_channel_types()
     logger.info(f"Calyx Online: {bot.user}")
     logger.info(f"Operations Paused: {OPERATIONS_PAUSED}")
 
     # Update Calyx agent health
     await update_agent_health("Calyx", status="Active", increment_execution=True)
+    
+    # Start health check server
+    if not health_server:
+        health_server = HealthServer(bot, notion, port=8080)
+        await health_server.start()
+        logger.info("Health check endpoints available at http://localhost:8080/health")
 
     # Start the Glass Journal polling task
     if notion and not poll_glass_journal.is_running():
