@@ -1543,6 +1543,9 @@ async def export(interaction: discord.Interaction):
 # =============================================================================
 
 # Dangerous shell command patterns to block
+# NOTE: This is a blacklist approach suitable for a single-user system.
+# For multi-user scenarios, consider a whitelist approach or sandboxed execution.
+# Users can still potentially bypass these checks, so only use in trusted environments.
 SHELL_BLACKLIST = [
     "rm -rf",
     "rm -r /",
@@ -1557,7 +1560,7 @@ SHELL_BLACKLIST = [
 
 @bot.tree.command(name="exec", description="Execute Python code (30s timeout)")
 @app_commands.describe(code="Python code to execute")
-async def exec_command(interaction: discord.Interaction, code: str):
+async def execute_code(interaction: discord.Interaction, code: str):
     """Execute arbitrary Python code with safety measures."""
     await interaction.response.defer(ephemeral=False)
     
@@ -1688,7 +1691,7 @@ async def exec_command(interaction: discord.Interaction, code: str):
 
 @bot.tree.command(name="shell", description="Execute shell command (30s timeout)")
 @app_commands.describe(command="Shell command to execute")
-async def shell_command(interaction: discord.Interaction, command: str):
+async def execute_shell(interaction: discord.Interaction, command: str):
     """Execute shell commands with safety checks."""
     await interaction.response.defer(ephemeral=False)
     
