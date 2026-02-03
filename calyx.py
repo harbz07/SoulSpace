@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import logging.handlers
 import os
 import threading
 import uuid
@@ -14,6 +16,7 @@ from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from calyx_notion_integration import log_trace, create_task, update_agent_health
+from health_server import HealthServer
 
 # Google OAuth imports
 from google_auth_oauthlib.flow import Flow
@@ -23,6 +26,65 @@ from notion_client.errors import APIResponseError
 
 from dotenv import load_dotenv
 load_dotenv()
+
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+
+# Logging constants
+MAX_LOG_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+LOG_BACKUP_COUNT = 5
+
+def setup_logging():
+    """Configure structured logging with file rotation."""
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Create formatters
+    detailed_formatter = logging.Formatter(
+        '%(asctime)s | %(name)s | %(levelname)s | %(funcName)s:%(lineno)d | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    simple_formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    
+    # Root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(simple_formatter)
+    logger.addHandler(console_handler)
+    
+    # File handler with rotation
+    file_handler = logging.handlers.RotatingFileHandler(
+        f"{log_dir}/calyx.log",
+        maxBytes=MAX_LOG_FILE_SIZE,
+        backupCount=LOG_BACKUP_COUNT
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(detailed_formatter)
+    logger.addHandler(file_handler)
+    
+    # Error file handler
+    error_handler = logging.handlers.RotatingFileHandler(
+        f"{log_dir}/errors.log",
+        maxBytes=MAX_LOG_FILE_SIZE,
+        backupCount=LOG_BACKUP_COUNT
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(detailed_formatter)
+    logger.addHandler(error_handler)
+    
+    return logger
+
+logger = setup_logging()
 
 # Discord Config
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -49,12 +111,12 @@ if NOTION_TOKEN:
     try:
         notion = NotionClient(auth=NOTION_TOKEN)
         notion.users.me()
-        print("Notion auth verified")
+        logger.info("Notion authentication verified")
     except Exception as e:
-        print("Notion auth failed:", e)
+        logger.error(f"Notion auth failed: {e}")
         notion = None
 else:
-    print("NOTION_TOKEN not found")
+    logger.warning("NOTION_TOKEN not found in environment variables")
 
 # Google OAuth Config
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -286,7 +348,7 @@ async def create_trace_log(
         )
         return response
     except APIResponseError as e:
-        print(f"Notion API Error (create_trace_log): {e}")
+        logger.error(f"Notion API Error (create_trace_log): {e}")
         return None
 
 
@@ -360,7 +422,7 @@ async def update_agent_health(
 
         return True
     except APIResponseError as e:
-        print(f"Notion API Error (update_agent_health): {e}")
+        logger.error(f"Notion API Error (update_agent_health): {e}")
         return None
 
 
@@ -376,7 +438,7 @@ async def query_memory_archive(memory_id: str):
         )
         return response["results"][0] if response["results"] else None
     except APIResponseError as e:
-        print(f"Notion API Error (query_memory_archive): {e}")
+        logger.error(f"Notion API Error (query_memory_archive): {e}")
         return None
 
 
@@ -389,7 +451,7 @@ async def delete_memory(page_id: str):
         notion.pages.update(page_id=page_id, archived=True)
         return True
     except APIResponseError as e:
-        print(f"Notion API Error (delete_memory): {e}")
+        logger.error(f"Notion API Error (delete_memory): {e}")
         return False
 
 
@@ -424,7 +486,7 @@ async def add_to_knowledge_base(
         )
         return response
     except APIResponseError as e:
-        print(f"Notion API Error (add_to_knowledge_base): {e}")
+        logger.error(f"Notion API Error (add_to_knowledge_base): {e}")
         return None
 
 
@@ -437,7 +499,7 @@ async def query_all_agent_health():
         response = notion.databases.query(database_id=NOTION_AGENT_HEALTH_ID)
         return response["results"]
     except APIResponseError as e:
-        print(f"Notion API Error (query_all_agent_health): {e}")
+        logger.error(f"Notion API Error (query_all_agent_health): {e}")
         return []
 
 
@@ -454,7 +516,7 @@ async def set_all_agents_status(status: str):
             )
         return True
     except APIResponseError as e:
-        print(f"Notion API Error (set_all_agents_status): {e}")
+        logger.error(f"Notion API Error (set_all_agents_status): {e}")
         return False
 
 
@@ -470,7 +532,7 @@ async def query_trace_by_id(trace_id: str):
         )
         return response["results"][0] if response["results"] else None
     except APIResponseError as e:
-        print(f"Notion API Error (query_trace_by_id): {e}")
+        logger.error(f"Notion API Error (query_trace_by_id): {e}")
         return None
 
 
@@ -522,10 +584,10 @@ async def store_oauth_tokens(service: str, credentials: Credentials) -> bool:
     try:
         with open(token_path, "w") as f:
             json.dump(token_data, f, indent=2)
-        print(f"Stored OAuth token for {service} at {token_path}")
+        logger.info(f"Stored OAuth token for {service} at {token_path}")
         return True
     except Exception as e:
-        print(f"Error storing token to file: {e}")
+        logger.error(f"Error storing token to file: {e}")
         return False
 
 
@@ -534,7 +596,7 @@ async def get_oauth_tokens(service: str) -> Credentials | None:
     token_path = get_token_path(service)
 
     if not os.path.exists(token_path):
-        print(f"No token file found for {service}")
+        logger.debug(f"No token file found for {service}")
         return None
 
     try:
@@ -557,13 +619,13 @@ async def get_oauth_tokens(service: str) -> Credentials | None:
 
         # Refresh if expired
         if credentials.expired and credentials.refresh_token:
-            print(f"Refreshing expired token for {service}")
+            logger.info(f"Refreshing expired token for {service}")
             credentials.refresh(Request())
             await store_oauth_tokens(service, credentials)
 
         return credentials
     except Exception as e:
-        print(f"Error retrieving OAuth tokens: {e}")
+        logger.error(f"Error retrieving OAuth tokens: {e}")
         return None
 
 
@@ -623,13 +685,13 @@ async def run_oauth_callback_server(flow: Flow, timeout: int = 120) -> str | Non
 
     try:
         await site.start()
-        print(f"OAuth callback server started on port {OAUTH_REDIRECT_PORT}")
+        logger.info(f"OAuth callback server started on port {OAUTH_REDIRECT_PORT}")
 
         # Wait for callback or timeout
         try:
             await asyncio.wait_for(auth_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            print("OAuth callback timed out")
+            logger.warning("OAuth callback timed out")
             return None
 
         return auth_code
@@ -690,10 +752,13 @@ class CalyxBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print(f"Synced slash commands for {self.user}")
+        logger.info(f"Synced slash commands for {self.user}")
 
 
 bot = CalyxBot()
+
+# Global health server instance
+health_server = None
 
 
 # =============================================================================
@@ -762,17 +827,25 @@ class PurgeConfirmView(View):
 
 @bot.event
 async def on_ready():
+    global health_server
+    
     init_channel_types()
-    print(f"Calyx Online: {bot.user}")
-    print(f"Operations Paused: {OPERATIONS_PAUSED}")
+    logger.info(f"Calyx Online: {bot.user}")
+    logger.info(f"Operations Paused: {OPERATIONS_PAUSED}")
 
     # Update Calyx agent health
     await update_agent_health("Calyx", status="Active", increment_execution=True)
+    
+    # Start health check server
+    if not health_server:
+        health_server = HealthServer(bot, notion, port=8080)
+        await health_server.start()
+        logger.info("Health check endpoints available at http://localhost:8080/health")
 
     # Start the Glass Journal polling task
     if notion and not poll_glass_journal.is_running():
         poll_glass_journal.start()
-        print("Broadcast Protocol Active - polling The Glass Journal")
+        logger.info("Broadcast Protocol Active - polling The Glass Journal")
 
     # Post status to #the-mirror if configured
     if CHANNEL_THE_MIRROR:
@@ -889,7 +962,7 @@ async def poll_glass_journal():
                 await channel.send(message)
                 last_processed_id = page_id
     except Exception as e:
-        print(f"Broadcast Error ({type(e).__name__}): {e}")
+        logger.error(f"Broadcast Error ({type(e).__name__}): {e}")
 
 # =============================================================================
 # SLASH COMMANDS
@@ -1454,10 +1527,10 @@ async def export(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     if not TOKEN:
-        print("ERROR: DISCORD_TOKEN not found in .env")
+        logger.error("ERROR: DISCORD_TOKEN not found in .env")
         exit(1)
 
     if not NOTION_TOKEN:
-        print("WARNING: NOTION_TOKEN not configured. Notion features will be disabled.")
+        logger.warning("WARNING: NOTION_TOKEN not configured. Notion features will be disabled.")
 
     bot.run(TOKEN)
