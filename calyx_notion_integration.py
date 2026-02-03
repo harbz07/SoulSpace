@@ -5,7 +5,7 @@ Writes Discord activity to Vessel Framework databases
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from notion_client import Client
 
@@ -48,7 +48,7 @@ async def log_trace(
             properties={
                 "Trace ID": {"title": [{"text": {"content": trace_id}}]},
                 "Timestamp": {
-                    "date": {"start": datetime.utcnow().isoformat()}
+                    "date": {"start": datetime.now(timezone.utc).isoformat()}
                 },
                 "Request Summary": {
                     "rich_text": [{"text": {"content": request_summary}}]
@@ -148,7 +148,7 @@ async def update_agent_health(
             "Agent Name": {"title": [{"text": {"content": agent_name}}]},
             "Status": {"select": {"name": status}},
             "Last Execution": {
-                "date": {"start": datetime.utcnow().isoformat()}
+                "date": {"start": datetime.now(timezone.utc).isoformat()}
             },
             "Auth Status": {"select": {"name": auth_status}}
         }

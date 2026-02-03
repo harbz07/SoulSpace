@@ -184,19 +184,28 @@ class TestChannelContext:
     
     def test_init_channel_types(self, mock_env_vars):
         """Test channel types initialization."""
-        init_channel_types()
-        from calyx import CHANNEL_TYPES
-        assert len(CHANNEL_TYPES) == 5
-        assert "123456789" in CHANNEL_TYPES
+        # Import inside test to get fresh environment
+        import importlib
+        import calyx
+        importlib.reload(calyx)
+        
+        calyx.init_channel_types()
+        assert len(calyx.CHANNEL_TYPES) == 5
+        assert "123456789" in calyx.CHANNEL_TYPES
     
     def test_get_channel_context_known(self, mock_env_vars):
         """Test getting context for known channel."""
-        init_channel_types()
-        context = get_channel_context("123456789")
+        # Import inside test to get fresh environment
+        import importlib
+        import calyx
+        importlib.reload(calyx)
+        
+        calyx.init_channel_types()
+        context = calyx.get_channel_context("123456789")
         assert context == "the-well"
     
     def test_get_channel_context_unknown(self, mock_env_vars):
         """Test getting context for unknown channel."""
-        init_channel_types()
+        from calyx import get_channel_context
         context = get_channel_context("999999999")
         assert context == "unknown"

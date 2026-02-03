@@ -5,6 +5,7 @@ Integration tests for calyx.py Discord bot functionality.
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import os
+import sys
 
 
 class TestBotInitialization:
@@ -12,20 +13,29 @@ class TestBotInitialization:
     
     def test_bot_initialization(self, mock_env_vars):
         """Test bot starts without errors."""
+        # Re-import calyx with mocked environment
+        if 'calyx' in sys.modules:
+            del sys.modules['calyx']
+        
         with patch('discord.Client'):
-            # Import after patching to avoid actual bot initialization
             import calyx
             assert calyx.TOKEN is not None
             assert calyx.NOTION_TOKEN is not None
     
     def test_channel_ids_loaded(self, mock_env_vars):
         """Test channel IDs are loaded from environment."""
+        if 'calyx' in sys.modules:
+            del sys.modules['calyx']
+        
         import calyx
         assert calyx.CHANNEL_THE_WELL == "123456789"
         assert calyx.CHANNEL_ENGINE_LOGS == "987654321"
     
     def test_google_oauth_config(self, mock_env_vars):
         """Test Google OAuth configuration."""
+        if 'calyx' in sys.modules:
+            del sys.modules['calyx']
+        
         import calyx
         assert calyx.GOOGLE_CLIENT_ID is not None
         assert calyx.GOOGLE_CLIENT_SECRET is not None
@@ -37,17 +47,20 @@ class TestChannelContextLoading:
     
     def test_channel_context_loading(self, mock_env_vars):
         """Test channel type detection."""
-        from calyx import init_channel_types, get_channel_context
+        if 'calyx' in sys.modules:
+            del sys.modules['calyx']
         
-        init_channel_types()
+        import calyx
+        
+        calyx.init_channel_types()
         
         # Test known channels
-        assert get_channel_context("123456789") == "the-well"
-        assert get_channel_context("987654321") == "engine-logs"
-        assert get_channel_context("111222333") == "the-scream"
+        assert calyx.get_channel_context("123456789") == "the-well"
+        assert calyx.get_channel_context("987654321") == "engine-logs"
+        assert calyx.get_channel_context("111222333") == "the-scream"
         
         # Test unknown channel
-        assert get_channel_context("999999999") == "unknown"
+        assert calyx.get_channel_context("999999999") == "unknown"
 
 
 class TestCreateOAuthFlow:
@@ -128,7 +141,10 @@ class TestExportFunctionality:
     @pytest.mark.asyncio
     async def test_list_stored_tokens(self, mock_env_vars, tmp_path):
         """Test listing stored tokens."""
-        from calyx import list_stored_tokens
+        if 'calyx' in sys.modules:
+            del sys.modules['calyx']
+        
+        import calyx
         
         # Patch TOKEN_DIR to use tmp_path
         with patch('calyx.TOKEN_DIR', str(tmp_path)):
@@ -136,7 +152,9 @@ class TestExportFunctionality:
             (tmp_path / "gmail_token.json").write_text('{"token": "test"}')
             (tmp_path / "calendar_token.json").write_text('{"token": "test2"}')
             
-            tokens = list_stored_tokens()
+            tokens = calyx.list_stored_tokens()
             assert len(tokens) == 2
-            assert "gmail" in tokens
-            assert "calendar" in tokens
+            # Check if service names are in the list
+            services = [t['service'] for t in tokens]
+            assert "gmail" in services
+            assert "calendar" in services
