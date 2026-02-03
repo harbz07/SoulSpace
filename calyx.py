@@ -3,6 +3,8 @@ import json
 import logging
 import logging.handlers
 import os
+import subprocess
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +19,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from calyx_notion_integration import log_trace, create_task, update_agent_health
 from health_server import HealthServer
+from notion_validator import validate_all_databases, print_validation_results
 
 # Google OAuth imports
 from google_auth_oauthlib.flow import Flow
@@ -833,6 +836,20 @@ async def on_ready():
     logger.info(f"Calyx Online: {bot.user}")
     logger.info(f"Operations Paused: {OPERATIONS_PAUSED}")
 
+    # Validate Notion database schemas if Notion is configured
+    if notion:
+        database_ids = {
+            "task_board": NOTION_TASK_BOARD_ID,
+            "trace_log": NOTION_TRACE_LOG_ID,
+            "agent_health": NOTION_AGENT_HEALTH_ID,
+            "knowledge_base": NOTION_KNOWLEDGE_BASE_ID,
+            "memory_archive": NOTION_MEMORY_ARCHIVE_ID
+        }
+        validation_results = validate_all_databases(notion, database_ids)
+        print_validation_results(validation_results)
+    else:
+        logger.warning("Notion client not configured - skipping schema validation")
+
     # Update Calyx agent health
     await update_agent_health("Calyx", status="Active", increment_execution=True)
     
@@ -1519,6 +1536,303 @@ async def export(interaction: discord.Interaction):
     embed.add_field(name="Contents", value="\n".join(summary_lines), inline=False)
 
     await interaction.followup.send(embed=embed, file=file, ephemeral=True)
+
+
+# =============================================================================
+# CODE EXECUTION COMMANDS
+# =============================================================================
+
+# Dangerous shell command patterns to block
+# NOTE: This is a blacklist approach suitable for a single-user system.
+# For multi-user scenarios, consider a whitelist approach or sandboxed execution.
+# Users can still potentially bypass these checks, so only use in trusted environments.
+SHELL_BLACKLIST = [
+    "rm -rf",
+    "rm -r /",
+    "dd if=",
+    "mkfs",
+    "> /dev/",
+    ":(){ :|:& };:",  # fork bomb
+    "mv /* ",
+    "chmod -R 777 /",
+]
+
+
+@bot.tree.command(name="exec", description="Execute Python code (30s timeout)")
+@app_commands.describe(code="Python code to execute")
+async def execute_code(interaction: discord.Interaction, code: str):
+    """Execute arbitrary Python code with safety measures."""
+    await interaction.response.defer(ephemeral=False)
+    
+    trace_id = generate_trace_id()
+    
+    try:
+        # Create temporary file for the code
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            temp_file = f.name
+            f.write(code)
+        
+        # Execute the code with timeout
+        try:
+            result = subprocess.run(
+                ['python', temp_file],
+                capture_output=True,
+                timeout=30,
+                text=True
+            )
+            
+            stdout = result.stdout if result.stdout else "(no output)"
+            stderr = result.stderr if result.stderr else ""
+            return_code = result.returncode
+            success = return_code == 0
+            
+            # Truncate output if too long
+            max_length = 1800
+            if len(stdout) > max_length:
+                stdout = stdout[:max_length] + "\n... (output truncated)"
+            if len(stderr) > max_length:
+                stderr = stderr[:max_length] + "\n... (output truncated)"
+            
+        except subprocess.TimeoutExpired:
+            stdout = ""
+            stderr = "Execution timed out after 30 seconds"
+            return_code = -1
+            success = False
+        
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+        
+        # Build response embed
+        color = discord.Color.green() if success else discord.Color.red()
+        embed = discord.Embed(
+            title="Python Code Execution",
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        # Show code (truncated if needed)
+        code_preview = code if len(code) <= 500 else code[:500] + "\n... (truncated)"
+        embed.add_field(name="Code", value=f"```python\n{code_preview}\n```", inline=False)
+        
+        # Show stdout
+        if stdout:
+            embed.add_field(name="Output", value=f"```\n{stdout}\n```", inline=False)
+        
+        # Show stderr
+        if stderr:
+            embed.add_field(name="Errors", value=f"```\n{stderr}\n```", inline=False)
+        
+        embed.add_field(name="Return Code", value=f"`{return_code}`", inline=True)
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        # Log to engine
+        result_msg = "Success" if success else f"Failed (code {return_code})"
+        await log_to_engine(
+            bot,
+            trace_id,
+            f"Python code execution: {code[:50]}...",
+            ["CodeExecutor"],
+            ["Python Runtime"],
+            result_msg,
+            success
+        )
+        
+        # Create trace log
+        await create_trace_log(
+            trace_id,
+            f"Execute Python code",
+            ["CodeExecutor"],
+            ["Python Runtime"],
+            success
+        )
+        
+        # Update agent health
+        await update_agent_health(
+            "CodeExecutor",
+            status="Active" if success else "Error",
+            increment_execution=True,
+            increment_error=not success,
+            last_error=stderr if not success else None
+        )
+        
+        # Post to scream if failed
+        if not success:
+            await log_to_scream(
+                bot,
+                "Code Execution Error",
+                f"Python code execution failed\nTrace: {trace_id}\nError: {stderr[:200]}",
+                f"Return code: {return_code}"
+            )
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"Exec command error: {e}", exc_info=True)
+        
+        embed = discord.Embed(
+            title="Execution Error",
+            description=f"Failed to execute code: {str(e)}",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        await interaction.followup.send(embed=embed)
+        
+        await log_to_scream(
+            bot,
+            "Code Execution System Error",
+            f"Exec command crashed\nTrace: {trace_id}\nError: {str(e)}"
+        )
+
+
+@bot.tree.command(name="shell", description="Execute shell command (30s timeout)")
+@app_commands.describe(command="Shell command to execute")
+async def execute_shell(interaction: discord.Interaction, command: str):
+    """Execute shell commands with safety checks."""
+    await interaction.response.defer(ephemeral=False)
+    
+    trace_id = generate_trace_id()
+    
+    # Safety check - block dangerous commands
+    for pattern in SHELL_BLACKLIST:
+        if pattern in command.lower():
+            embed = discord.Embed(
+                title="Command Blocked",
+                description=f"This command contains a dangerous pattern and has been blocked for safety.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Blocked Pattern", value=f"`{pattern}`", inline=False)
+            embed.add_field(name="Command", value=f"```bash\n{command}\n```", inline=False)
+            embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+            
+            await interaction.followup.send(embed=embed)
+            
+            # Log the attempt
+            await log_to_engine(
+                bot,
+                trace_id,
+                f"Blocked dangerous shell command: {command[:50]}...",
+                ["ShellExecutor"],
+                ["Security Filter"],
+                f"Blocked - dangerous pattern: {pattern}",
+                False
+            )
+            
+            return
+    
+    try:
+        # Execute the command with timeout
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                timeout=30,
+                text=True
+            )
+            
+            stdout = result.stdout if result.stdout else "(no output)"
+            stderr = result.stderr if result.stderr else ""
+            return_code = result.returncode
+            success = return_code == 0
+            
+            # Truncate output if too long
+            max_length = 1800
+            if len(stdout) > max_length:
+                stdout = stdout[:max_length] + "\n... (output truncated)"
+            if len(stderr) > max_length:
+                stderr = stderr[:max_length] + "\n... (output truncated)"
+            
+        except subprocess.TimeoutExpired:
+            stdout = ""
+            stderr = "Command timed out after 30 seconds"
+            return_code = -1
+            success = False
+        
+        # Build response embed
+        color = discord.Color.green() if success else discord.Color.red()
+        embed = discord.Embed(
+            title="Shell Command Execution",
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        # Show command
+        embed.add_field(name="Command", value=f"```bash\n{command}\n```", inline=False)
+        
+        # Show stdout
+        if stdout:
+            embed.add_field(name="Output", value=f"```\n{stdout}\n```", inline=False)
+        
+        # Show stderr
+        if stderr:
+            embed.add_field(name="Errors", value=f"```\n{stderr}\n```", inline=False)
+        
+        embed.add_field(name="Return Code", value=f"`{return_code}`", inline=True)
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        # Log to engine
+        result_msg = "Success" if success else f"Failed (code {return_code})"
+        await log_to_engine(
+            bot,
+            trace_id,
+            f"Shell command execution: {command[:50]}...",
+            ["ShellExecutor"],
+            ["System Shell"],
+            result_msg,
+            success
+        )
+        
+        # Create trace log
+        await create_trace_log(
+            trace_id,
+            f"Execute shell command",
+            ["ShellExecutor"],
+            ["System Shell"],
+            success
+        )
+        
+        # Update agent health
+        await update_agent_health(
+            "ShellExecutor",
+            status="Active" if success else "Error",
+            increment_execution=True,
+            increment_error=not success,
+            last_error=stderr if not success else None
+        )
+        
+        # Post to scream if failed
+        if not success:
+            await log_to_scream(
+                bot,
+                "Shell Command Error",
+                f"Shell command failed\nTrace: {trace_id}\nError: {stderr[:200]}",
+                f"Return code: {return_code}"
+            )
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"Shell command error: {e}", exc_info=True)
+        
+        embed = discord.Embed(
+            title="Execution Error",
+            description=f"Failed to execute command: {str(e)}",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        await interaction.followup.send(embed=embed)
+        
+        await log_to_scream(
+            bot,
+            "Shell Execution System Error",
+            f"Shell command crashed\nTrace: {trace_id}\nError: {str(e)}"
+        )
 
 
 # =============================================================================
