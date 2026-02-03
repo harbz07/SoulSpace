@@ -1,296 +1,262 @@
-# SoulSpace Calyx
+# SoulSpace Calyx - Vessel Framework
 
-A Discord bot for the SoulSpace community with Notion integration, OAuth support, and comprehensive monitoring.
+A single-user Discord bot orchestration system that uses Discord as a nervous system and Notion as persistent memory. Calyx serves as the central coordinating agent for the Vessel Framework, providing execution capabilities, memory management, and comprehensive observability.
 
-## Features
+## 🎯 Overview
 
-- 🤖 **Discord Bot**: Interact with users across multiple channels
-- 📝 **Notion Integration**: Log traces, create tasks, and monitor agent health
-- 🔐 **Google OAuth**: Authenticate with Gmail and Calendar
-- 📊 **Health Monitoring**: Built-in health check endpoints for monitoring
+The Vessel Framework is designed as a personal AI assistant orchestration layer:
+- **Discord** acts as the nervous system (real-time communication and commands)
+- **Notion** acts as persistent memory (databases for tasks, traces, health, knowledge, and memories)
+- **Calyx** acts as the orchestrator (coordinates agents, executes code, manages state)
+
+## ✨ Features
+
+- 🤖 **Discord Bot**: Slash commands for interaction and control
+- 📝 **Notion Integration**: Automatic logging to 5 specialized databases
+- 🔐 **Google OAuth**: Gmail and Calendar authentication
+- 🔍 **Schema Validation**: Startup checks for Notion database configuration
+- ⚡ **Code Execution**: Run Python code and shell commands via Discord
+- 📊 **Health Monitoring**: Built-in health check endpoints
 - 📝 **Structured Logging**: File-rotated logs with multiple verbosity levels
-- ✅ **Comprehensive Testing**: Unit and integration tests with >70% coverage
+- 🎯 **Trace System**: Every operation gets a unique trace ID for debugging
 
-## Setup
+## 📋 Prerequisites
 
-### Prerequisites
+- **Python 3.10+** (tested with 3.12)
+- **Discord Account** with a server where you have admin access
+- **Notion Account** (free tier works)
+- **Google Cloud Account** (optional, for Gmail/Calendar features)
 
-- Python 3.12+
-- Discord Bot Token
-- Notion API Token (optional)
-- Google OAuth Credentials (optional)
+## 🚀 Installation
 
-### Installation
+### 1. Clone the Repository
 
-1. Clone the repository:
-```bash
+\`\`\`bash
 git clone https://github.com/harbz07/SoulSpace.git
 cd SoulSpace
-```
+\`\`\`
 
-2. Create and activate virtual environment:
-```bash
+### 2. Create Virtual Environment
+
+\`\`\`bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+\`\`\`
 
-3. Install dependencies:
-```bash
+### 3. Install Dependencies
+
+\`\`\`bash
 pip install -r requirements.txt
-```
+\`\`\`
 
-4. Configure environment variables:
-Create a `.env` file in the project root:
-```env
-# Discord Configuration
-DISCORD_TOKEN=your_discord_token
+### 4. Configure Environment Variables
 
-# Channel IDs
-CHANNEL_THE_WELL=123456789
-CHANNEL_ENGINE_LOGS=987654321
-CHANNEL_THE_SCREAM=111222333
-CHANNEL_THE_MIRROR=444555666
-CHANNEL_THE_COUNSEL=777888999
+Copy the example environment file:
 
-# Notion Configuration (optional)
-NOTION_TOKEN=your_notion_token
-NOTION_TASK_BOARD_ID=your_task_board_id
-NOTION_TRACE_LOG_ID=your_trace_log_id
-NOTION_AGENT_HEALTH_ID=your_agent_health_id
-NOTION_KNOWLEDGE_BASE_ID=your_knowledge_base_id
-NOTION_MEMORY_ARCHIVE_ID=your_memory_archive_id
-JOURNAL_DB_ID=your_journal_db_id
+\`\`\`bash
+cp .env.example .env
+\`\`\`
 
-# Google OAuth Configuration (optional)
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
-```
+Edit \`.env\` and configure all required values (see Configuration section below).
 
-5. Run the bot:
-```bash
+## ⚙️ Configuration
+
+### Discord Setup
+
+1. **Create a Discord Bot**
+   - Go to https://discord.com/developers/applications
+   - Click "New Application" and give it a name
+   - Go to the "Bot" section
+   - Click "Reset Token" and copy the token to \`DISCORD_TOKEN\` in \`.env\`
+   - Enable "Message Content Intent" under "Privileged Gateway Intents"
+
+2. **Invite Bot to Your Server**
+   - Go to "OAuth2" > "URL Generator"
+   - Select scopes: \`bot\`, \`applications.commands\`
+   - Select bot permissions: \`Send Messages\`, \`Manage Messages\`, \`Read Message History\`, \`Use Slash Commands\`
+   - Copy the generated URL and open it in browser to invite bot
+
+3. **Get Channel IDs**
+   - Enable Developer Mode: User Settings > Advanced > Developer Mode
+   - Right-click on each channel and select "Copy ID"
+   - Paste the IDs into \`.env\`:
+     - \`CHANNEL_THE_WELL\` - Main interaction channel
+     - \`CHANNEL_ENGINE_LOGS\` - System trace logs
+     - \`CHANNEL_THE_SCREAM\` - Error notifications
+     - \`CHANNEL_THE_MIRROR\` - Status updates
+     - \`CHANNEL_THE_COUNSEL\` - Commands/control
+
+### Notion Setup
+
+1. **Create a Notion Integration**
+   - Go to https://www.notion.so/my-integrations
+   - Click "New integration"
+   - Give it a name (e.g., "Calyx Bot")
+   - Copy the "Internal Integration Token" to \`NOTION_TOKEN\` in \`.env\`
+
+2. **Create the 5 Required Databases**
+
+   You need to create 5 databases with specific schemas. For each database:
+
+   **Task Board** (\`NOTION_TASK_BOARD_ID\`)
+   - \`Task\` - Title property
+   - \`Status\` - Select property (options: To-Do, Executing, Blocked, Done, Cancelled)
+   - \`Priority\` - Select property (options: Critical, High, Medium, Low)
+   - \`Assigned To\` - Select property (options: tinyNature, Calyx, Harvey, Claude, Other)
+   - \`Trigger Source\` - Select property (options: Manual, TIME, EVENT, API)
+   - \`Trace Link\` - URL property
+   - \`Blocker Reason\` - Text property
+
+   **Trace Log Index** (\`NOTION_TRACE_LOG_ID\`)
+   - \`Trace ID\` - Title property
+   - \`Timestamp\` - Date property
+   - \`Request Summary\` - Text property
+   - \`Agent Chain\` - Text property
+   - \`Data Sources Used\` - Multi-select property
+   - \`Discord Link\` - URL property
+   - \`Success\` - Checkbox property
+
+   **Agent Health Monitor** (\`NOTION_AGENT_HEALTH_ID\`)
+   - \`Agent Name\` - Title property
+   - \`Status\` - Select property (options: Active, Paused, Error, Disabled)
+   - \`Last Execution\` - Date property
+   - \`Execution Count\` - Number property
+   - \`Error Count\` - Number property
+   - \`Last Error Message\` - Text property
+   - \`Auth Status\` - Select property (options: Valid, Expired, Invalid, N/A)
+
+   **Knowledge Base** (\`NOTION_KNOWLEDGE_BASE_ID\`)
+   - \`Entry Title\` - Title property
+   - \`Category\` - Select property
+   - \`Consent Level\` - Select property
+   - \`Source\` - Select property
+   - \`Last Verified\` - Date property
+
+   **Memory Archive** (\`NOTION_MEMORY_ARCHIVE_ID\`)
+   - \`Memory ID\` - Title property
+   - \`Type\` - Select property
+   - \`Consent Status\` - Select property
+   - \`Created Date\` - Date property
+   - \`Last Accessed\` - Date property
+   - \`Access Count\` - Number property
+   - \`Retention Policy\` - Select property
+   - \`Content Preview\` - Text property
+
+3. **Share Databases with Integration**
+   - Open each database in Notion
+   - Click "Share" in the top right
+   - Invite your integration (it will appear in the dropdown)
+   - Repeat for all 5 databases
+
+4. **Get Database IDs**
+   - Open each database in Notion (full-page view, not inline)
+   - Copy the URL from your browser
+   - The URL looks like: \`https://notion.so/workspace/DATABASE_ID?v=VIEW_ID\`
+   - Extract the 32-character hex string (DATABASE_ID) between the last \`/\` and the \`?\`
+   - Paste each ID into the corresponding variable in \`.env\`
+
+### Google OAuth Setup (Optional)
+
+Only needed if you want Gmail/Calendar integration:
+
+1. Go to https://console.cloud.google.com/
+2. Create a new project (or select existing)
+3. Enable "Gmail API" and "Google Calendar API"
+4. Go to "Credentials" > "Create Credentials" > "OAuth 2.0 Client ID"
+5. Application type: "Desktop app"
+6. Copy the Client ID and Client Secret to \`.env\`
+
+## 🏃 Running the Bot
+
+### Development Mode
+
+\`\`\`bash
 python calyx.py
-```
+\`\`\`
 
-## Testing
+The bot will:
+1. Validate all Notion database schemas on startup
+2. Display validation results with ✅/❌/⚠️ indicators
+3. Connect to Discord
+4. Start the health check server on port 8080
+5. Post a status message to #the-mirror
 
-### Run Tests
+For detailed testing, commands reference, troubleshooting and more, see the full documentation in the repository.
 
-Run all tests:
-```bash
+## 📚 Commands Reference
+
+### System Control
+- **\`/pause\`** - Suspend all automated triggers
+- **\`/resume\`** - Re-enable automated operations
+
+### Information & Debugging
+- **\`/status\`** - Show all agent health
+- **\`/trace <trace_id>\`** - Get raw logs for specific trace ID
+
+### Code Execution (⚠️ Single-user system!)
+- **\`/exec <code>\`** - Execute Python code (30s timeout)
+- **\`/shell <command>\`** - Execute shell command (30s timeout, safety checks)
+
+### Authentication
+- **\`/auth <service>\`** - Authenticate service (gmail, calendar)
+
+### Data Management
+- **\`/export\`** - Generate full data dump for backup
+- **\`/purge <memory_id>\`** - Delete specific memory
+
+## 🔒 Security Notes
+
+⚠️ **This is a single-user system by design**. The \`/exec\` and \`/shell\` commands allow arbitrary code execution.
+
+**Security measures**:
+- Shell command blacklist blocks dangerous commands
+- 30-second timeout prevents runaway processes
+- All executions logged with trace IDs
+- Failures posted to #the-scream channel
+
+**Recommendations**:
+- Run in sandboxed environment
+- Use low-privilege user account
+- Don't expose to untrusted users
+- Monitor execution logs regularly
+
+## 🧪 Testing
+
+\`\`\`bash
+# Run all tests
 pytest tests/
-```
 
-Run tests with coverage:
-```bash
+# Run with coverage
 pytest tests/ --cov --cov-report=html
-```
 
-Quick smoke test:
-```bash
+# Quick smoke test
 ./smoke_test.sh
-```
+\`\`\`
 
-For detailed testing documentation, see [TESTING.md](TESTING.md).
+## 🔧 Troubleshooting
 
-## Logging
+See detailed troubleshooting guide in repository documentation covering:
+- Schema validation failures
+- OAuth callback timeouts
+- Agent health not updating
+- Bot won't start
+- Commands not appearing
 
-The bot uses structured logging with automatic file rotation:
+## 📝 Logging
 
-- **Console Output**: Simple format for real-time monitoring
-- **Main Log**: Detailed logs in `logs/calyx.log` (rotates at 10MB, keeps 5 backups)
-- **Error Log**: Errors only in `logs/errors.log` (rotates at 10MB, keeps 5 backups)
+Logs are automatically rotated (10MB, 5 backups):
+- \`logs/calyx.log\` - Main log
+- \`logs/errors.log\` - Errors only
 
-### Log Levels
+## 🔗 Links
 
-- `INFO`: General operational messages
-- `WARNING`: Warning messages
-- `ERROR`: Error messages
-- `DEBUG`: Detailed debugging information
+- **Discord Server**: https://discord.gg/QU7urpGV
+- **Repository**: https://github.com/harbz07/SoulSpace
 
-### View Logs
+## 📊 Health Check Endpoints
 
-```bash
-# Tail main log
-tail -f logs/calyx.log
-
-# Tail error log
-tail -f logs/errors.log
-
-# View recent errors
-tail -100 logs/errors.log
-```
-
-## Health Checks and Monitoring
-
-The bot includes built-in health check endpoints for monitoring:
-
-### Endpoints
-
-- **`GET /health`**: Basic health status
-  ```json
-  {
-    "status": "healthy",
-    "service": "Calyx",
-    "timestamp": "2024-01-01T00:00:00.000Z",
-    "uptime_seconds": 3600
-  }
-  ```
-
-- **`GET /health/live`**: Liveness probe (Kubernetes-style)
-  ```json
-  {
-    "status": "alive"
-  }
-  ```
-
-- **`GET /health/ready`**: Readiness probe (checks Discord and Notion)
-  ```json
-  {
-    "status": "ready",
-    "checks": {
-      "discord": true,
-      "notion": true
-    }
-  }
-  ```
-
-- **`GET /metrics`**: Basic metrics
-  ```json
-  {
-    "uptime_seconds": 3600,
-    "discord_latency_ms": 45.2,
-    "guild_count": 1,
-    "user_count": 150,
-    "notion_connected": true
-  }
-  ```
-
-### Health Server Configuration
-
-The health server runs on port 8080 by default. Access endpoints at:
-```
-http://localhost:8080/health
-http://localhost:8080/health/live
-http://localhost:8080/health/ready
-http://localhost:8080/metrics
-```
-
-### Monitoring with Docker/Kubernetes
-
-Example Kubernetes liveness and readiness probes:
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health/live
-    port: 8080
-  initialDelaySeconds: 30
-  periodSeconds: 10
-
-readinessProbe:
-  httpGet:
-    path: /health/ready
-    port: 8080
-  initialDelaySeconds: 5
-  periodSeconds: 5
-```
-
-## Architecture
-
-### Key Components
-
-- **`calyx.py`**: Main Discord bot implementation
-- **`calyx_notion_integration.py`**: Notion API integration
-- **`health_server.py`**: Health check and metrics server
-
-### Channel Types
-
-The bot operates across multiple specialized channels:
-
-- **The Well**: Main interaction channel
-- **Engine Logs**: System trace logs
-- **The Scream**: Error reporting
-- **The Mirror**: Status updates
-- **The Counsel**: Commands and control
-
-## Commands
-
-### Slash Commands
-
-- `/pause`: Pause bot operations
-- `/unpause`: Resume bot operations
-- `/export_databases`: Export Notion databases to JSON
-- `/connect_gmail`: Connect Gmail account via OAuth
-- `/connect_calendar`: Connect Google Calendar via OAuth
-
-## Development
-
-### Project Structure
-
-```
-SoulSpace/
-├── calyx.py                      # Main bot
-├── calyx_notion_integration.py   # Notion integration
-├── health_server.py              # Health check server
-├── requirements.txt              # Dependencies
-├── pytest.ini                    # Test configuration
-├── smoke_test.sh                 # Quick test script
-├── TESTING.md                    # Testing documentation
-├── logs/                         # Log files (git-ignored)
-├── tokens/                       # OAuth tokens (git-ignored)
-└── tests/                        # Test suite
-    ├── __init__.py
-    ├── conftest.py
-    ├── test_helpers.py
-    ├── test_calyx.py
-    └── test_notion_integration.py
-```
-
-### Adding New Features
-
-1. Write tests first (TDD)
-2. Implement the feature
-3. Add logging statements
-4. Update health checks if needed
-5. Update documentation
-6. Run tests and ensure coverage
-
-### Code Style
-
-- Use type hints where possible
-- Add docstrings to functions
-- Follow PEP 8 style guide
-- Use structured logging (no print statements)
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-## License
-
-[Add your license here]
-
-## Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check [TESTING.md](TESTING.md) for testing help
-- Review logs in `logs/` directory
-
-## Changelog
-
-### Version 1.1.0 (Current)
-- ✅ Added comprehensive test framework with pytest
-- ✅ Implemented structured logging with file rotation
-- ✅ Added health check endpoints for monitoring
-- ✅ Added test coverage reporting
-- ✅ Created testing documentation
-
-### Version 1.0.0
-- Initial release with Discord bot
-- Notion integration
-- Google OAuth support
+Access at \`http://localhost:8080/health\`:
+- \`/health\` - Basic status
+- \`/health/live\` - Liveness probe
+- \`/health/ready\` - Readiness probe
+- \`/metrics\` - Basic metrics
