@@ -32,6 +32,10 @@ load_dotenv()
 # LOGGING CONFIGURATION
 # =============================================================================
 
+# Logging constants
+MAX_LOG_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+LOG_BACKUP_COUNT = 5
+
 def setup_logging():
     """Configure structured logging with file rotation."""
     log_dir = "logs"
@@ -61,8 +65,8 @@ def setup_logging():
     # File handler with rotation
     file_handler = logging.handlers.RotatingFileHandler(
         f"{log_dir}/calyx.log",
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
+        maxBytes=MAX_LOG_FILE_SIZE,
+        backupCount=LOG_BACKUP_COUNT
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(detailed_formatter)
@@ -71,8 +75,8 @@ def setup_logging():
     # Error file handler
     error_handler = logging.handlers.RotatingFileHandler(
         f"{log_dir}/errors.log",
-        maxBytes=10*1024*1024,
-        backupCount=5
+        maxBytes=MAX_LOG_FILE_SIZE,
+        backupCount=LOG_BACKUP_COUNT
     )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(detailed_formatter)

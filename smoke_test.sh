@@ -2,6 +2,8 @@
 set -e
 
 echo "🔍 Starting SoulSpace Smoke Tests..."
+echo "Note: Make sure this script is executable (chmod +x smoke_test.sh)"
+echo ""
 
 # Activate virtual environment
 if [ -d "venv" ]; then

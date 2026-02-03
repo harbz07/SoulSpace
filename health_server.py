@@ -70,7 +70,7 @@ class HealthServer:
                 try:
                     self.notion.users.me()
                     checks["notion"] = True
-                except:
+                except Exception:
                     checks["notion"] = False
             
             all_ready = all(checks.values())
