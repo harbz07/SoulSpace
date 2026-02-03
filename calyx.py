@@ -210,78 +210,7 @@ async def create_trace_log(
         return None
 
 
-async def update_agent_health(
-    agent_name: str,
-    status: str = None,
-    increment_execution: bool = False,
-    increment_error: bool = False,
-    error_message: str = None,
-    auth_status: str = None,
-):
-    """Update Agent Health Monitor in Notion."""
-    if not notion or not NOTION_AGENT_HEALTH_ID:
-        return None
-
-    try:
-        # Query for existing agent entry
-        response = notion.databases.query(
-            database_id=NOTION_AGENT_HEALTH_ID,
-            filter={"property": "Agent Name", "title": {"equals": agent_name}},
-        )
-
-        properties = {}
-        if status:
-            properties["Status"] = {"select": {"name": status}}
-        if auth_status:
-            properties["Auth Status"] = {"select": {"name": auth_status}}
-        if error_message:
-            properties["Last Error Message"] = {
-                "rich_text": [{"text": {"content": error_message[:2000]}}]
-            }
-
-        properties["Last Execution"] = {
-            "date": {"start": datetime.now(timezone.utc).isoformat()}
-        }
-
-        if response["results"]:
-            # Update existing entry
-            page_id = response["results"][0]["id"]
-            current_props = response["results"][0]["properties"]
-
-            if increment_execution:
-                current_count = (
-                    current_props.get("Execution Count", {}).get("number", 0) or 0
-                )
-                properties["Execution Count"] = {"number": current_count + 1}
-
-            if increment_error:
-                current_errors = (
-                    current_props.get("Error Count", {}).get("number", 0) or 0
-                )
-                properties["Error Count"] = {"number": current_errors + 1}
-
-            notion.pages.update(page_id=page_id, properties=properties)
-        else:
-            # Create new entry
-            properties["Agent Name"] = {"title": [{"text": {"content": agent_name}}]}
-            if increment_execution:
-                properties["Execution Count"] = {"number": 1}
-            if increment_error:
-                properties["Error Count"] = {"number": 1}
-            else:
-                properties["Error Count"] = {"number": 0}
-                properties["Execution Count"] = {
-                    "number": 1 if increment_execution else 0
-                }
-
-            notion.pages.create(
-                parent={"database_id": NOTION_AGENT_HEALTH_ID}, properties=properties
-            )
-
-        return True
-    except APIResponseError as e:
-        print(f"Notion API Error (update_agent_health): {e}")
-        return None
+# update_agent_health is now imported from calyx_notion_integration (see line 16)
 
 
 async def query_memory_archive(memory_id: str):

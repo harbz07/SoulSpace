@@ -110,68 +110,133 @@ async def create_task(
 
 async def update_agent_health(
     agent_name: str,
-    status: str,
+    status: str = None,
     execution_count: int = None,
     error_count: int = None,
     last_error: str = None,
-    auth_status: str = "N/A"
+    increment_execution: bool = False,
+    increment_error: bool = False,
+    error_message: str = None,
+    auth_status: str = None,
 ):
     """
-    Update agent health status in Notion
+    Unified implementation of update_agent_health.
+    
+    Update agent health status in Notion with support for both explicit counts
+    and increment flags for backward compatibility.
     
     Args:
         agent_name: Name of the agent
-        status: One of ["Active", "Paused", "Error", "Disabled"]
-        execution_count: Total number of executions
-        error_count: Total number of errors
+        status: One of ["Active", "Paused", "Error", "Disabled"] (optional)
+        execution_count: Total number of executions (explicit value)
+        error_count: Total number of errors (explicit value)
         last_error: Most recent error message
-        auth_status: One of ["Valid", "Expired", "Invalid", "N/A"]
+        increment_execution: If True, increment execution count by 1
+        increment_error: If True, increment error count by 1
+        error_message: Alias for last_error (for backward compatibility)
+        auth_status: One of ["Valid", "Expired", "Invalid", "N/A"] (optional)
+    
+    Returns:
+        True on success, None on failure or if Notion is not configured
     """
+    # Use environment variable for database ID, fallback to hardcoded
+    database_id = os.getenv("NOTION_AGENT_HEALTH_ID", AGENT_HEALTH_ID)
+    
+    # Check if notion client is available
+    if not notion or not database_id:
+        return None
+    
+    # Handle error_message alias
+    if error_message and not last_error:
+        last_error = error_message
+    
     try:
-        # First, check if agent already exists
+        # Query for existing agent entry
         results = notion.databases.query(
-            database_id=AGENT_HEALTH_ID,
+            database_id=database_id,
             filter={
                 "property": "Agent Name",
                 "title": {"equals": agent_name}
             }
         )
         
-        properties = {
-            "Agent Name": {"title": [{"text": {"content": agent_name}}]},
-            "Status": {"select": {"name": status}},
-            "Last Execution": {
-                "date": {"start": datetime.utcnow().isoformat()}
-            },
-            "Auth Status": {"select": {"name": auth_status}}
-        }
+        properties = {}
         
-        if execution_count is not None:
-            properties["Execution Count"] = {"number": execution_count}
+        # Add status if provided
+        if status:
+            properties["Status"] = {"select": {"name": status}}
         
-        if error_count is not None:
-            properties["Error Count"] = {"number": error_count}
+        # Add auth status if provided
+        if auth_status:
+            properties["Auth Status"] = {"select": {"name": auth_status}}
         
+        # Add error message if provided
         if last_error:
+            # Truncate to 2000 characters to avoid Notion API rich_text limits
             properties["Last Error Message"] = {
-                "rich_text": [{"text": {"content": last_error}}]
+                "rich_text": [{"text": {"content": last_error[:2000]}}]
             }
         
+        # Always update Last Execution timestamp
+        properties["Last Execution"] = {
+            "date": {"start": datetime.utcnow().isoformat()}
+        }
+        
         if results["results"]:
-            # Update existing
+            # Update existing entry
             page_id = results["results"][0]["id"]
+            current_props = results["results"][0]["properties"]
+            
+            # Handle execution count
+            if increment_execution:
+                current_count = (
+                    current_props.get("Execution Count", {}).get("number", 0) or 0
+                )
+                properties["Execution Count"] = {"number": current_count + 1}
+            elif execution_count is not None:
+                properties["Execution Count"] = {"number": execution_count}
+            
+            # Handle error count
+            if increment_error:
+                current_errors = (
+                    current_props.get("Error Count", {}).get("number", 0) or 0
+                )
+                properties["Error Count"] = {"number": current_errors + 1}
+            elif error_count is not None:
+                properties["Error Count"] = {"number": error_count}
+            
             notion.pages.update(page_id=page_id, properties=properties)
             print(f"✅ Updated health for {agent_name}")
         else:
-            # Create new
+            # Create new entry
+            properties["Agent Name"] = {"title": [{"text": {"content": agent_name}}]}
+            
+            # Set initial counts for new entry
+            if increment_execution:
+                properties["Execution Count"] = {"number": 1}
+            elif execution_count is not None:
+                properties["Execution Count"] = {"number": execution_count}
+            else:
+                properties["Execution Count"] = {"number": 0}
+            
+            if increment_error:
+                properties["Error Count"] = {"number": 1}
+            elif error_count is not None:
+                properties["Error Count"] = {"number": error_count}
+            else:
+                properties["Error Count"] = {"number": 0}
+            
             notion.pages.create(
-                parent={"database_id": AGENT_HEALTH_ID},
+                parent={"database_id": database_id},
                 properties=properties
             )
             print(f"✅ Created health entry for {agent_name}")
+        
+        return True
     
     except Exception as e:
         print(f"❌ Failed to update agent health: {e}")
+        return None
 
 
 # Example usage in Discord bot:
