@@ -3,10 +3,13 @@ Notion Integration for Calyx
 Writes Discord activity to Vessel Framework databases
 """
 
+import logging
 import os
 from datetime import datetime
 from dotenv import load_dotenv
 from notion_client import Client
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -60,9 +63,9 @@ async def log_trace(
                 "Success": {"checkbox": success}
             }
         )
-        print(f"✅ Logged trace {trace_id} to Notion")
+        logger.info(f"Logged trace {trace_id} to Notion")
     except Exception as e:
-        print(f"❌ Failed to log trace: {e}")
+        logger.error(f"Failed to log trace: {e}")
 
 
 async def create_task(
@@ -107,9 +110,9 @@ async def create_task(
             parent={"database_id": TASK_BOARD_ID},
             properties=properties
         )
-        print(f"✅ Created task: {task_name}")
+        logger.info(f"Created task: {task_name}")
     except Exception as e:
-        print(f"❌ Failed to create task: {e}")
+        logger.error(f"Failed to create task: {e}")
 
 
 async def update_agent_health(
@@ -165,17 +168,17 @@ async def update_agent_health(
             # Update existing
             page_id = results["results"][0]["id"]
             notion.pages.update(page_id=page_id, properties=properties)
-            print(f"✅ Updated health for {agent_name}")
+            logger.info(f"Updated health for {agent_name}")
         else:
             # Create new
             notion.pages.create(
                 parent={"database_id": AGENT_HEALTH_ID},
                 properties=properties
             )
-            print(f"✅ Created health entry for {agent_name}")
+            logger.info(f"Created health entry for {agent_name}")
     
     except Exception as e:
-        print(f"❌ Failed to update agent health: {e}")
+        logger.error(f"Failed to update agent health: {e}")
 
 
 # Example usage in Discord bot:
