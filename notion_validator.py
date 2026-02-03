@@ -149,7 +149,7 @@ def validate_database_schema(
             return False, issues
             
     except APIResponseError as e:
-        issues.append(f"❌ {database_name}: API error - {e.message}")
+        issues.append(f"❌ {database_name}: API error - {str(e)}")
         return False, issues
     except Exception as e:
         issues.append(f"❌ {database_name}: Validation error - {str(e)}")
