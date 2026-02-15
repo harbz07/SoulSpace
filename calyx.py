@@ -1,6 +1,10 @@
 import asyncio
 import json
+import logging
+import logging.handlers
 import os
+import subprocess
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +18,8 @@ from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from calyx_notion_integration import log_trace, create_task, update_agent_health
+from health_server import HealthServer
+from notion_validator import validate_all_databases, print_validation_results
 
 # Google OAuth imports
 from google_auth_oauthlib.flow import Flow
@@ -23,6 +29,65 @@ from notion_client.errors import APIResponseError
 
 from dotenv import load_dotenv
 load_dotenv()
+
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+
+# Logging constants
+MAX_LOG_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+LOG_BACKUP_COUNT = 5
+
+def setup_logging():
+    """Configure structured logging with file rotation."""
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Create formatters
+    detailed_formatter = logging.Formatter(
+        '%(asctime)s | %(name)s | %(levelname)s | %(funcName)s:%(lineno)d | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    simple_formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    
+    # Root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(simple_formatter)
+    logger.addHandler(console_handler)
+    
+    # File handler with rotation
+    file_handler = logging.handlers.RotatingFileHandler(
+        f"{log_dir}/calyx.log",
+        maxBytes=MAX_LOG_FILE_SIZE,
+        backupCount=LOG_BACKUP_COUNT
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(detailed_formatter)
+    logger.addHandler(file_handler)
+    
+    # Error file handler
+    error_handler = logging.handlers.RotatingFileHandler(
+        f"{log_dir}/errors.log",
+        maxBytes=MAX_LOG_FILE_SIZE,
+        backupCount=LOG_BACKUP_COUNT
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(detailed_formatter)
+    logger.addHandler(error_handler)
+    
+    return logger
+
+logger = setup_logging()
 
 # Discord Config
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -49,12 +114,12 @@ if NOTION_TOKEN:
     try:
         notion = NotionClient(auth=NOTION_TOKEN)
         notion.users.me()
-        print("Notion auth verified")
+        logger.info("Notion authentication verified")
     except Exception as e:
-        print("Notion auth failed:", e)
+        logger.error(f"Notion auth failed: {e}")
         notion = None
 else:
-    print("NOTION_TOKEN not found")
+    logger.warning("NOTION_TOKEN not found in environment variables")
 
 # Google OAuth Config
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -65,6 +130,86 @@ OAUTH_REDIRECT_URI = f"http://localhost:{OAUTH_REDIRECT_PORT}/callback"
 # Token storage directory
 TOKEN_DIR = os.path.join(os.path.dirname(__file__), "tokens")
 os.makedirs(TOKEN_DIR, exist_ok=True)
+
+
+# =============================================================================
+# HELPER FUNCTIONS - Safe Notion Property Access
+# =============================================================================
+
+
+def safe_get_notion_property(props: dict, property_name: str, property_type: str, default=None):
+    """
+    Safely extract a Notion property value, handling null/missing values.
+    
+    Args:
+        props: Properties dictionary from a Notion page
+        property_name: Name of the property to extract
+        property_type: Type of property (title, rich_text, select, multi_select, 
+                       number, checkbox, date, url)
+        default: Default value to return if property is None, missing, or empty
+    
+    Returns:
+        Extracted property value or default. For unsupported property types, 
+        returns the default value.
+    
+    Note:
+        multi_select returns a list of non-empty names, filtering out null values.
+        This ensures consistent list handling even with sparse data.
+    """
+    try:
+        prop = props.get(property_name)
+        if prop is None:
+            return default
+        
+        if property_type == "title":
+            title_array = prop.get("title", [])
+            if title_array and len(title_array) > 0:
+                return title_array[0].get("text", {}).get("content", default)
+            return default
+        
+        elif property_type == "rich_text":
+            rich_text_array = prop.get("rich_text", [])
+            if rich_text_array and len(rich_text_array) > 0:
+                return rich_text_array[0].get("text", {}).get("content", default)
+            return default
+        
+        elif property_type == "select":
+            select_obj = prop.get("select")
+            if select_obj is not None:
+                return select_obj.get("name", default)
+            return default
+        
+        elif property_type == "multi_select":
+            # Filter out items with null/empty names to maintain list consistency
+            multi_select_array = prop.get("multi_select", [])
+            return [item.get("name") for item in multi_select_array if item.get("name")]
+        
+        elif property_type == "number":
+            num_value = prop.get("number")
+            return num_value if num_value is not None else default
+        
+        elif property_type == "checkbox":
+            check_value = prop.get("checkbox")
+            if check_value is not None:
+                return check_value
+            return default if default is not None else False
+        
+        elif property_type == "date":
+            date_obj = prop.get("date")
+            if date_obj is not None:
+                return date_obj.get("start", default)
+            return default
+        
+        elif property_type == "url":
+            url_value = prop.get("url")
+            return url_value if url_value is not None else default
+        
+        else:
+            # Unsupported property type - return default
+            return default
+    
+    except (KeyError, TypeError, IndexError, AttributeError):
+        return default
 
 # Google OAuth scopes for different services
 GOOGLE_SCOPES = {
@@ -206,7 +351,7 @@ async def create_trace_log(
         )
         return response
     except APIResponseError as e:
-        print(f"Notion API Error (create_trace_log): {e}")
+        logger.error(f"Notion API Error (create_trace_log): {e}")
         return None
 
 
@@ -249,15 +394,15 @@ async def update_agent_health(
             current_props = response["results"][0]["properties"]
 
             if increment_execution:
-                current_count = (
-                    current_props.get("Execution Count", {}).get("number", 0) or 0
-                )
+                current_count = safe_get_notion_property(
+                    current_props, "Execution Count", "number", 0
+                ) or 0
                 properties["Execution Count"] = {"number": current_count + 1}
 
             if increment_error:
-                current_errors = (
-                    current_props.get("Error Count", {}).get("number", 0) or 0
-                )
+                current_errors = safe_get_notion_property(
+                    current_props, "Error Count", "number", 0
+                ) or 0
                 properties["Error Count"] = {"number": current_errors + 1}
 
             notion.pages.update(page_id=page_id, properties=properties)
@@ -280,7 +425,7 @@ async def update_agent_health(
 
         return True
     except APIResponseError as e:
-        print(f"Notion API Error (update_agent_health): {e}")
+        logger.error(f"Notion API Error (update_agent_health): {e}")
         return None
 
 
@@ -296,7 +441,7 @@ async def query_memory_archive(memory_id: str):
         )
         return response["results"][0] if response["results"] else None
     except APIResponseError as e:
-        print(f"Notion API Error (query_memory_archive): {e}")
+        logger.error(f"Notion API Error (query_memory_archive): {e}")
         return None
 
 
@@ -309,7 +454,7 @@ async def delete_memory(page_id: str):
         notion.pages.update(page_id=page_id, archived=True)
         return True
     except APIResponseError as e:
-        print(f"Notion API Error (delete_memory): {e}")
+        logger.error(f"Notion API Error (delete_memory): {e}")
         return False
 
 
@@ -344,7 +489,7 @@ async def add_to_knowledge_base(
         )
         return response
     except APIResponseError as e:
-        print(f"Notion API Error (add_to_knowledge_base): {e}")
+        logger.error(f"Notion API Error (add_to_knowledge_base): {e}")
         return None
 
 
@@ -357,7 +502,7 @@ async def query_all_agent_health():
         response = notion.databases.query(database_id=NOTION_AGENT_HEALTH_ID)
         return response["results"]
     except APIResponseError as e:
-        print(f"Notion API Error (query_all_agent_health): {e}")
+        logger.error(f"Notion API Error (query_all_agent_health): {e}")
         return []
 
 
@@ -374,7 +519,7 @@ async def set_all_agents_status(status: str):
             )
         return True
     except APIResponseError as e:
-        print(f"Notion API Error (set_all_agents_status): {e}")
+        logger.error(f"Notion API Error (set_all_agents_status): {e}")
         return False
 
 
@@ -390,7 +535,7 @@ async def query_trace_by_id(trace_id: str):
         )
         return response["results"][0] if response["results"] else None
     except APIResponseError as e:
-        print(f"Notion API Error (query_trace_by_id): {e}")
+        logger.error(f"Notion API Error (query_trace_by_id): {e}")
         return None
 
 
@@ -442,10 +587,10 @@ async def store_oauth_tokens(service: str, credentials: Credentials) -> bool:
     try:
         with open(token_path, "w") as f:
             json.dump(token_data, f, indent=2)
-        print(f"Stored OAuth token for {service} at {token_path}")
+        logger.info(f"Stored OAuth token for {service} at {token_path}")
         return True
     except Exception as e:
-        print(f"Error storing token to file: {e}")
+        logger.error(f"Error storing token to file: {e}")
         return False
 
 
@@ -454,7 +599,7 @@ async def get_oauth_tokens(service: str) -> Credentials | None:
     token_path = get_token_path(service)
 
     if not os.path.exists(token_path):
-        print(f"No token file found for {service}")
+        logger.debug(f"No token file found for {service}")
         return None
 
     try:
@@ -477,13 +622,13 @@ async def get_oauth_tokens(service: str) -> Credentials | None:
 
         # Refresh if expired
         if credentials.expired and credentials.refresh_token:
-            print(f"Refreshing expired token for {service}")
+            logger.info(f"Refreshing expired token for {service}")
             credentials.refresh(Request())
             await store_oauth_tokens(service, credentials)
 
         return credentials
     except Exception as e:
-        print(f"Error retrieving OAuth tokens: {e}")
+        logger.error(f"Error retrieving OAuth tokens: {e}")
         return None
 
 
@@ -543,13 +688,13 @@ async def run_oauth_callback_server(flow: Flow, timeout: int = 120) -> str | Non
 
     try:
         await site.start()
-        print(f"OAuth callback server started on port {OAUTH_REDIRECT_PORT}")
+        logger.info(f"OAuth callback server started on port {OAUTH_REDIRECT_PORT}")
 
         # Wait for callback or timeout
         try:
             await asyncio.wait_for(auth_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            print("OAuth callback timed out")
+            logger.warning("OAuth callback timed out")
             return None
 
         return auth_code
@@ -610,10 +755,13 @@ class CalyxBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print(f"Synced slash commands for {self.user}")
+        logger.info(f"Synced slash commands for {self.user}")
 
 
 bot = CalyxBot()
+
+# Global health server instance
+health_server = None
 
 
 # =============================================================================
@@ -682,17 +830,39 @@ class PurgeConfirmView(View):
 
 @bot.event
 async def on_ready():
+    global health_server
+    
     init_channel_types()
-    print(f"Calyx Online: {bot.user}")
-    print(f"Operations Paused: {OPERATIONS_PAUSED}")
+    logger.info(f"Calyx Online: {bot.user}")
+    logger.info(f"Operations Paused: {OPERATIONS_PAUSED}")
+
+    # Validate Notion database schemas if Notion is configured
+    if notion:
+        database_ids = {
+            "task_board": NOTION_TASK_BOARD_ID,
+            "trace_log": NOTION_TRACE_LOG_ID,
+            "agent_health": NOTION_AGENT_HEALTH_ID,
+            "knowledge_base": NOTION_KNOWLEDGE_BASE_ID,
+            "memory_archive": NOTION_MEMORY_ARCHIVE_ID
+        }
+        validation_results = validate_all_databases(notion, database_ids)
+        print_validation_results(validation_results)
+    else:
+        logger.warning("Notion client not configured - skipping schema validation")
 
     # Update Calyx agent health
     await update_agent_health("Calyx", status="Active", increment_execution=True)
+    
+    # Start health check server
+    if not health_server:
+        health_server = HealthServer(bot, notion, port=8080)
+        await health_server.start()
+        logger.info("Health check endpoints available at http://localhost:8080/health")
 
     # Start the Glass Journal polling task
     if notion and not poll_glass_journal.is_running():
         poll_glass_journal.start()
-        print("Broadcast Protocol Active - polling The Glass Journal")
+        logger.info("Broadcast Protocol Active - polling The Glass Journal")
 
     # Post status to #the-mirror if configured
     if CHANNEL_THE_MIRROR:
@@ -800,11 +970,8 @@ async def poll_glass_journal():
             
             if page_id != last_processed_id:
                 # Safely extract title
-                title_array = latest_page["properties"]["Name"]["title"]
-                if title_array and len(title_array) > 0:
-                    title = title_array[0]["plain_text"]
-                else:
-                    title = "Untitled"
+                props = latest_page["properties"]
+                title = safe_get_notion_property(props, "Name", "title", "Untitled")
                 
                 url = f"https://www.notion.so/{page_id.replace('-', '')}"
                 
@@ -812,7 +979,7 @@ async def poll_glass_journal():
                 await channel.send(message)
                 last_processed_id = page_id
     except Exception as e:
-        print(f"Broadcast Error ({type(e).__name__}): {e}")
+        logger.error(f"Broadcast Error ({type(e).__name__}): {e}")
 
 # =============================================================================
 # SLASH COMMANDS
@@ -1099,25 +1266,12 @@ async def trace(interaction: discord.Interaction, trace_id: str):
         props = trace_data["properties"]
 
         # Extract data from Notion properties
-        request = (
-            props.get("Request Summary", {})
-            .get("rich_text", [{}])[0]
-            .get("text", {})
-            .get("content", "N/A")
-        )
-        agents = (
-            props.get("Agent Chain", {})
-            .get("rich_text", [{}])[0]
-            .get("text", {})
-            .get("content", "N/A")
-        )
-        sources = [
-            s["name"]
-            for s in props.get("Data Sources Used", {}).get("multi_select", [])
-        ]
-        success = props.get("Success", {}).get("checkbox", False)
-        timestamp = props.get("Timestamp", {}).get("date", {}).get("start", "N/A")
-        discord_link = props.get("Discord Link", {}).get("url", "")
+        request = safe_get_notion_property(props, "Request Summary", "rich_text", "N/A")
+        agents = safe_get_notion_property(props, "Agent Chain", "rich_text", "N/A")
+        sources = safe_get_notion_property(props, "Data Sources Used", "multi_select", [])
+        success = safe_get_notion_property(props, "Success", "checkbox", False)
+        timestamp = safe_get_notion_property(props, "Timestamp", "date", "N/A")
+        discord_link = safe_get_notion_property(props, "Discord Link", "url", "")
 
         embed = discord.Embed(
             title=f"Trace: {trace_id}",
@@ -1183,18 +1337,11 @@ async def status(interaction: discord.Interaction):
     if agents:
         for agent in agents[:10]:  # Limit to 10 agents for embed
             props = agent["properties"]
-            name = (
-                props.get("Agent Name", {})
-                .get("title", [{}])[0]
-                .get("text", {})
-                .get("content", "Unknown")
-            )
-            agent_status = (
-                props.get("Status", {}).get("select", {}).get("name", "Unknown")
-            )
-            exec_count = props.get("Execution Count", {}).get("number", 0)
-            error_count = props.get("Error Count", {}).get("number", 0)
-            auth = props.get("Auth Status", {}).get("select", {}).get("name", "N/A")
+            name = safe_get_notion_property(props, "Agent Name", "title", "Unknown")
+            agent_status = safe_get_notion_property(props, "Status", "select", "Unknown")
+            exec_count = safe_get_notion_property(props, "Execution Count", "number", 0)
+            error_count = safe_get_notion_property(props, "Error Count", "number", 0)
+            auth = safe_get_notion_property(props, "Auth Status", "select", "N/A")
 
             status_emoji = {
                 "Active": "\U00002705",
@@ -1314,14 +1461,9 @@ async def purge(interaction: discord.Interaction, memory_id: str):
 
     # Extract memory details for preview
     props = memory["properties"]
-    mem_type = props.get("Type", {}).get("select", {}).get("name", "Unknown")
-    consent = props.get("Consent Status", {}).get("select", {}).get("name", "Unknown")
-    preview = (
-        props.get("Content Preview", {})
-        .get("rich_text", [{}])[0]
-        .get("text", {})
-        .get("content", "No preview available")
-    )
+    mem_type = safe_get_notion_property(props, "Type", "select", "Unknown")
+    consent = safe_get_notion_property(props, "Consent Status", "select", "Unknown")
+    preview = safe_get_notion_property(props, "Content Preview", "rich_text", "No preview available")
 
     embed = discord.Embed(
         title=f"Confirm Purge: {memory_id}",
@@ -1397,15 +1539,312 @@ async def export(interaction: discord.Interaction):
 
 
 # =============================================================================
+# CODE EXECUTION COMMANDS
+# =============================================================================
+
+# Dangerous shell command patterns to block
+# NOTE: This is a blacklist approach suitable for a single-user system.
+# For multi-user scenarios, consider a whitelist approach or sandboxed execution.
+# Users can still potentially bypass these checks, so only use in trusted environments.
+SHELL_BLACKLIST = [
+    "rm -rf",
+    "rm -r /",
+    "dd if=",
+    "mkfs",
+    "> /dev/",
+    ":(){ :|:& };:",  # fork bomb
+    "mv /* ",
+    "chmod -R 777 /",
+]
+
+
+@bot.tree.command(name="exec", description="Execute Python code (30s timeout)")
+@app_commands.describe(code="Python code to execute")
+async def execute_code(interaction: discord.Interaction, code: str):
+    """Execute arbitrary Python code with safety measures."""
+    await interaction.response.defer(ephemeral=False)
+    
+    trace_id = generate_trace_id()
+    
+    try:
+        # Create temporary file for the code
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            temp_file = f.name
+            f.write(code)
+        
+        # Execute the code with timeout
+        try:
+            result = subprocess.run(
+                ['python', temp_file],
+                capture_output=True,
+                timeout=30,
+                text=True
+            )
+            
+            stdout = result.stdout if result.stdout else "(no output)"
+            stderr = result.stderr if result.stderr else ""
+            return_code = result.returncode
+            success = return_code == 0
+            
+            # Truncate output if too long
+            max_length = 1800
+            if len(stdout) > max_length:
+                stdout = stdout[:max_length] + "\n... (output truncated)"
+            if len(stderr) > max_length:
+                stderr = stderr[:max_length] + "\n... (output truncated)"
+            
+        except subprocess.TimeoutExpired:
+            stdout = ""
+            stderr = "Execution timed out after 30 seconds"
+            return_code = -1
+            success = False
+        
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
+        
+        # Build response embed
+        color = discord.Color.green() if success else discord.Color.red()
+        embed = discord.Embed(
+            title="Python Code Execution",
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        # Show code (truncated if needed)
+        code_preview = code if len(code) <= 500 else code[:500] + "\n... (truncated)"
+        embed.add_field(name="Code", value=f"```python\n{code_preview}\n```", inline=False)
+        
+        # Show stdout
+        if stdout:
+            embed.add_field(name="Output", value=f"```\n{stdout}\n```", inline=False)
+        
+        # Show stderr
+        if stderr:
+            embed.add_field(name="Errors", value=f"```\n{stderr}\n```", inline=False)
+        
+        embed.add_field(name="Return Code", value=f"`{return_code}`", inline=True)
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        # Log to engine
+        result_msg = "Success" if success else f"Failed (code {return_code})"
+        await log_to_engine(
+            bot,
+            trace_id,
+            f"Python code execution: {code[:50]}...",
+            ["CodeExecutor"],
+            ["Python Runtime"],
+            result_msg,
+            success
+        )
+        
+        # Create trace log
+        await create_trace_log(
+            trace_id,
+            f"Execute Python code",
+            ["CodeExecutor"],
+            ["Python Runtime"],
+            success
+        )
+        
+        # Update agent health
+        await update_agent_health(
+            "CodeExecutor",
+            status="Active" if success else "Error",
+            increment_execution=True,
+            increment_error=not success,
+            last_error=stderr if not success else None
+        )
+        
+        # Post to scream if failed
+        if not success:
+            await log_to_scream(
+                bot,
+                "Code Execution Error",
+                f"Python code execution failed\nTrace: {trace_id}\nError: {stderr[:200]}",
+                f"Return code: {return_code}"
+            )
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"Exec command error: {e}", exc_info=True)
+        
+        embed = discord.Embed(
+            title="Execution Error",
+            description=f"Failed to execute code: {str(e)}",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        await interaction.followup.send(embed=embed)
+        
+        await log_to_scream(
+            bot,
+            "Code Execution System Error",
+            f"Exec command crashed\nTrace: {trace_id}\nError: {str(e)}"
+        )
+
+
+@bot.tree.command(name="shell", description="Execute shell command (30s timeout)")
+@app_commands.describe(command="Shell command to execute")
+async def execute_shell(interaction: discord.Interaction, command: str):
+    """Execute shell commands with safety checks."""
+    await interaction.response.defer(ephemeral=False)
+    
+    trace_id = generate_trace_id()
+    
+    # Safety check - block dangerous commands
+    for pattern in SHELL_BLACKLIST:
+        if pattern in command.lower():
+            embed = discord.Embed(
+                title="Command Blocked",
+                description=f"This command contains a dangerous pattern and has been blocked for safety.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Blocked Pattern", value=f"`{pattern}`", inline=False)
+            embed.add_field(name="Command", value=f"```bash\n{command}\n```", inline=False)
+            embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+            
+            await interaction.followup.send(embed=embed)
+            
+            # Log the attempt
+            await log_to_engine(
+                bot,
+                trace_id,
+                f"Blocked dangerous shell command: {command[:50]}...",
+                ["ShellExecutor"],
+                ["Security Filter"],
+                f"Blocked - dangerous pattern: {pattern}",
+                False
+            )
+            
+            return
+    
+    try:
+        # Execute the command with timeout
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                timeout=30,
+                text=True
+            )
+            
+            stdout = result.stdout if result.stdout else "(no output)"
+            stderr = result.stderr if result.stderr else ""
+            return_code = result.returncode
+            success = return_code == 0
+            
+            # Truncate output if too long
+            max_length = 1800
+            if len(stdout) > max_length:
+                stdout = stdout[:max_length] + "\n... (output truncated)"
+            if len(stderr) > max_length:
+                stderr = stderr[:max_length] + "\n... (output truncated)"
+            
+        except subprocess.TimeoutExpired:
+            stdout = ""
+            stderr = "Command timed out after 30 seconds"
+            return_code = -1
+            success = False
+        
+        # Build response embed
+        color = discord.Color.green() if success else discord.Color.red()
+        embed = discord.Embed(
+            title="Shell Command Execution",
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        # Show command
+        embed.add_field(name="Command", value=f"```bash\n{command}\n```", inline=False)
+        
+        # Show stdout
+        if stdout:
+            embed.add_field(name="Output", value=f"```\n{stdout}\n```", inline=False)
+        
+        # Show stderr
+        if stderr:
+            embed.add_field(name="Errors", value=f"```\n{stderr}\n```", inline=False)
+        
+        embed.add_field(name="Return Code", value=f"`{return_code}`", inline=True)
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        # Log to engine
+        result_msg = "Success" if success else f"Failed (code {return_code})"
+        await log_to_engine(
+            bot,
+            trace_id,
+            f"Shell command execution: {command[:50]}...",
+            ["ShellExecutor"],
+            ["System Shell"],
+            result_msg,
+            success
+        )
+        
+        # Create trace log
+        await create_trace_log(
+            trace_id,
+            f"Execute shell command",
+            ["ShellExecutor"],
+            ["System Shell"],
+            success
+        )
+        
+        # Update agent health
+        await update_agent_health(
+            "ShellExecutor",
+            status="Active" if success else "Error",
+            increment_execution=True,
+            increment_error=not success,
+            last_error=stderr if not success else None
+        )
+        
+        # Post to scream if failed
+        if not success:
+            await log_to_scream(
+                bot,
+                "Shell Command Error",
+                f"Shell command failed\nTrace: {trace_id}\nError: {stderr[:200]}",
+                f"Return code: {return_code}"
+            )
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"Shell command error: {e}", exc_info=True)
+        
+        embed = discord.Embed(
+            title="Execution Error",
+            description=f"Failed to execute command: {str(e)}",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Trace ID", value=f"`{trace_id}`", inline=True)
+        
+        await interaction.followup.send(embed=embed)
+        
+        await log_to_scream(
+            bot,
+            "Shell Execution System Error",
+            f"Shell command crashed\nTrace: {trace_id}\nError: {str(e)}"
+        )
+
+
+# =============================================================================
 # RUN BOT
 # =============================================================================
 
 if __name__ == "__main__":
     if not TOKEN:
-        print("ERROR: DISCORD_TOKEN not found in .env")
+        logger.error("ERROR: DISCORD_TOKEN not found in .env")
         exit(1)
 
     if not NOTION_TOKEN:
-        print("WARNING: NOTION_TOKEN not configured. Notion features will be disabled.")
+        logger.warning("WARNING: NOTION_TOKEN not configured. Notion features will be disabled.")
 
     bot.run(TOKEN)

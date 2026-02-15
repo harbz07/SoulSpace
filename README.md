@@ -70,7 +70,7 @@ cd SoulSpace
 
 ```bash
 python -m venv venv
-source venv/bin/activate # Windows: venv\Scripts\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
 ### 3. Install Dependencies
@@ -94,6 +94,7 @@ Edit `.env` and configure all required values (see Configuration section below).
 ### Discord Setup
 
 1. **Create a Discord Bot**
+<<<<<<< HEAD
  - Go to https://discord.com/developers/applications
  - Click "New Application" and give it a name
  - Go to the "Bot" section
@@ -115,10 +116,34 @@ Edit `.env` and configure all required values (see Configuration section below).
  - `CHANNEL_THE_SCREAM` - Error notifications
  - `CHANNEL_THE_MIRROR` - Status updates
  - `CHANNEL_THE_COUNSEL` - Commands/control
+=======
+   - Go to https://discord.com/developers/applications
+   - Click "New Application" and give it a name
+   - Go to the "Bot" section
+   - Click "Reset Token" and copy the token to `DISCORD_TOKEN` in `.env`
+   - Enable "Message Content Intent" under "Privileged Gateway Intents"
+
+2. **Invite Bot to Your Server**
+   - Go to "OAuth2" > "URL Generator"
+   - Select scopes: `bot`, `applications.commands`
+   - Select bot permissions: `Send Messages`, `Manage Messages`, `Read Message History`, `Use Slash Commands`
+   - Copy the generated URL and open it in browser to invite bot
+
+3. **Get Channel IDs**
+   - Enable Developer Mode: User Settings > Advanced > Developer Mode
+   - Right-click on each channel and select "Copy ID"
+   - Paste the IDs into `.env`:
+     - `CHANNEL_THE_WELL` - Main interaction channel
+     - `CHANNEL_ENGINE_LOGS` - System trace logs
+     - `CHANNEL_THE_SCREAM` - Error notifications
+     - `CHANNEL_THE_MIRROR` - Status updates
+     - `CHANNEL_THE_COUNSEL` - Commands/control
+>>>>>>> 488c328131a58643b1e0be0e205bd617e05190d2
 
 ### Notion Setup
 
 1. **Create a Notion Integration**
+<<<<<<< HEAD
  - Go to https://www.notion.so/my-integrations
  - Click "New integration"
  - Give it a name (e.g., "Calyx Bot")
@@ -184,6 +209,73 @@ Edit `.env` and configure all required values (see Configuration section below).
  - The URL looks like: `https://notion.so/workspace/DATABASE_ID?v=VIEW_ID`
  - Extract the 32-character hex string (DATABASE_ID) between the last `/` and the `?`
  - Paste each ID into the corresponding variable in `.env`
+=======
+   - Go to https://www.notion.so/my-integrations
+   - Click "New integration"
+   - Give it a name (e.g., "Calyx Bot")
+   - Copy the "Internal Integration Token" to `NOTION_TOKEN` in `.env`
+
+2. **Create the 5 Required Databases**
+
+   You need to create 5 databases with specific schemas. For each database:
+
+   **Task Board** (`NOTION_TASK_BOARD_ID`)
+   - `Task` - Title property
+   - `Status` - Select property (options: To-Do, Executing, Blocked, Done, Cancelled)
+   - `Priority` - Select property (options: Critical, High, Medium, Low)
+   - `Assigned To` - Select property (options: tinyNature, Calyx, Harvey, Claude, Other)
+   - `Trigger Source` - Select property (options: Manual, TIME, EVENT, API)
+   - `Trace Link` - URL property
+   - `Blocker Reason` - Text property
+
+   **Trace Log Index** (`NOTION_TRACE_LOG_ID`)
+   - `Trace ID` - Title property
+   - `Timestamp` - Date property
+   - `Request Summary` - Text property
+   - `Agent Chain` - Text property
+   - `Data Sources Used` - Multi-select property
+   - `Discord Link` - URL property
+   - `Success` - Checkbox property
+
+   **Agent Health Monitor** (`NOTION_AGENT_HEALTH_ID`)
+   - `Agent Name` - Title property
+   - `Status` - Select property (options: Active, Paused, Error, Disabled)
+   - `Last Execution` - Date property
+   - `Execution Count` - Number property
+   - `Error Count` - Number property
+   - `Last Error Message` - Text property
+   - `Auth Status` - Select property (options: Valid, Expired, Invalid, N/A)
+
+   **Knowledge Base** (`NOTION_KNOWLEDGE_BASE_ID`)
+   - `Entry Title` - Title property
+   - `Category` - Select property
+   - `Consent Level` - Select property
+   - `Source` - Select property
+   - `Last Verified` - Date property
+
+   **Memory Archive** (`NOTION_MEMORY_ARCHIVE_ID`)
+   - `Memory ID` - Title property
+   - `Type` - Select property
+   - `Consent Status` - Select property
+   - `Created Date` - Date property
+   - `Last Accessed` - Date property
+   - `Access Count` - Number property
+   - `Retention Policy` - Select property
+   - `Content Preview` - Text property
+
+3. **Share Databases with Integration**
+   - Open each database in Notion
+   - Click "Share" in the top right
+   - Invite your integration (it will appear in the dropdown)
+   - Repeat for all 5 databases
+
+4. **Get Database IDs**
+   - Open each database in Notion (full-page view, not inline)
+   - Copy the URL from your browser
+   - The URL looks like: `https://notion.so/workspace/DATABASE_ID?v=VIEW_ID`
+   - Extract the 32-character hex string (DATABASE_ID) between the last `/` and the `?`
+   - Paste each ID into the corresponding variable in `.env`
+>>>>>>> 488c328131a58643b1e0be0e205bd617e05190d2
 
 ### Google OAuth Setup (Optional)
 
@@ -221,6 +313,7 @@ For detailed testing, commands reference, troubleshooting and more, see the full
 
 ### Information & Debugging
 - **`/status`** - Show all agent health
+<<<<<<< HEAD
 - **`/trace `** - Get raw logs for specific trace ID
 
 ### Code Execution (⚠️ Single-user system!)
@@ -233,6 +326,20 @@ For detailed testing, commands reference, troubleshooting and more, see the full
 ### Data Management
 - **`/export`** - Generate full data dump for backup
 - **`/purge `** - Delete specific memory
+=======
+- **`/trace <trace_id>`** - Get raw logs for specific trace ID
+
+### Code Execution (⚠️ Single-user system!)
+- **`/exec <code>`** - Execute Python code (30s timeout)
+- **`/shell <command>`** - Execute shell command (30s timeout, safety checks)
+
+### Authentication
+- **`/auth <service>`** - Authenticate service (gmail, calendar)
+
+### Data Management
+- **`/export`** - Generate full data dump for backup
+- **`/purge <memory_id>`** - Delete specific memory
+>>>>>>> 488c328131a58643b1e0be0e205bd617e05190d2
 
 ## 🔒 Security Notes
 
