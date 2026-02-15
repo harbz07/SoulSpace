@@ -4,7 +4,6 @@
   "main": "src/remote-server.ts",
   "compatibility_date": "2026-02-15",
   "account_id": "31e9e8c6fcda0c10e7a4331a8dfb89fe",
-  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
   },
