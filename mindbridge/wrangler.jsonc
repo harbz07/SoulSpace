@@ -1,20 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "mindbridge",
-  "main": "worker/index.ts",
-  "compatibility_date": "2024-12-01",
+  "main": "src/remote-server.ts",
+  "compatibility_date": "2026-02-15",
+  "account_id": "31e9e8c6fcda0c10e7a4331a8dfb89fe",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true
   },
-  /**
-   * API keys are set via Wrangler secrets (not in this file):
-   *   wrangler secret put OPENAI_API_KEY
-   *   wrangler secret put ANTHROPIC_API_KEY
-   *   wrangler secret put GOOGLE_API_KEY
-   *   wrangler secret put DEEPSEEK_API_KEY
-   *   wrangler secret put OPENROUTER_API_KEY
-   * Optional: OPENAI_COMPATIBLE_API_BASE_URL, OPENAI_COMPATIBLE_API_KEY, etc.
-   */
   "vars": {}
 }
