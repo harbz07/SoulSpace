@@ -1,3 +1,8 @@
 .env
 __pycache__/
 venv/
+
+# MindBridge (Node.js component)
+mindbridge/node_modules/
+mindbridge/dist/
+mindbridge/.wrangler/
