@@ -15,7 +15,7 @@ const server = new MindBridgeServer();
 
 // Print banner - using console.error for stderr output
 console.error('\n✨ Mindbridge MCP Server ✨');
-console.error('Version: 1.1.0');
+console.error('Version: 1.2.0');
 console.error('\nStarting server...');
 
 // Connect the server
@@ -27,7 +27,13 @@ console.error('\nStarting server...');
     console.error('\nAvailable Tools:');
     console.error('- getSecondOpinion: Get responses from various LLM providers');
     console.error('- listProviders: List all configured LLM providers and their models');
-    console.error('- listReasoningModels: List models optimized for reasoning tasks\n');
+    console.error('- listReasoningModels: List models optimized for reasoning tasks');
+    console.error('- registerVessel: Register vessel endpoint + capabilities');
+    console.error('- listVessels: List known vessel registry entries');
+    console.error('- prepareAgentMigration: Build signed migration package');
+    console.error('- dispatchAgentMigration: Send package to target vessel');
+    console.error('- listAgentMigrations: Inspect migration package statuses');
+    console.error('- announceAgentEvent: Post Discord webhook/forum update\n');
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

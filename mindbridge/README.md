@@ -29,6 +29,7 @@ This isn't just model aggregation. It's model orchestration.
 | Multi-LLM Support | Instantly switch between OpenAI, Anthropic, Google, DeepSeek, OpenRouter, Ollama (local models), and OpenAI-compatible APIs.|
 | Reasoning Engine Aware | Smart routing to models built for deep reasoning like Claude, GPT-4o, DeepSeek Reasoner, etc.|
 | getSecondOpinion Tool | Ask multiple models the same question to compare responses side-by-side. |
+| Agent Mesh (Experimental) | Register vessel hosts, create migration packages, dispatch agent handoffs, and broadcast status to Discord webhooks/forums. |
 | OpenAI-Compatible API Layer | Drop MindBridge into any tool expecting OpenAI endpoints (Azure, Together.ai, Groq, etc.). |
 | Auto-Detects Providers | Just add your keys. MindBridge handles setup & discovery automagically. |
 | Flexible as Hell | Configure everything via env vars, MCP config, or JSON — it's your call. |
@@ -106,6 +107,11 @@ The server supports the following environment variables:
 - `OPENAI_COMPATIBLE_API_KEY`: (Optional) API key for OpenAI-compatible services
 - `OPENAI_COMPATIBLE_API_BASE_URL`: Base URL for OpenAI-compatible services
 - `OPENAI_COMPATIBLE_API_MODELS`: Comma-separated list of available models
+- `MINDBRIDGE_AGENT_MESH_STORAGE_PATH`: Optional JSON persistence path for vessel + migration state
+- `MINDBRIDGE_MIGRATION_ENDPOINT_PATH`: Default vessel handoff path (default: `/migrations/ingest`)
+- `MINDBRIDGE_MIGRATION_AUTH_TOKEN`: Optional bearer token added to migration dispatch requests
+- `MINDBRIDGE_DISCORD_WEBHOOK_URL`: Optional default webhook for migration/event announcements
+- `MINDBRIDGE_DISCORD_FORUM_WEBHOOK_URL`: Optional default forum webhook for threaded announcements
 
 ### MCP Configuration
 
@@ -125,7 +131,10 @@ For use with MCP-compatible IDEs like Cursor or Windsurf, you can use the follow
         "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY_HERE",
         "GOOGLE_API_KEY": "GOOGLE_API_KEY_HERE",
         "DEEPSEEK_API_KEY": "DEEPSEEK_API_KEY_HERE",
-        "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_HERE"
+        "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_HERE",
+        "MINDBRIDGE_AGENT_MESH_STORAGE_PATH": "/tmp/mindbridge-agent-mesh.json",
+        "MINDBRIDGE_DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/...",
+        "MINDBRIDGE_DISCORD_FORUM_WEBHOOK_URL": "https://discord.com/api/webhooks/..."
       },
       "provider_config": {
         "openai": {
@@ -161,7 +170,9 @@ For use with MCP-compatible IDEs like Cursor or Windsurf, you can use the follow
       "alwaysAllow": [
         "getSecondOpinion",
         "listProviders",
-        "listReasoningModels"
+        "listReasoningModels",
+        "listVessels",
+        "listAgentMigrations"
       ]
     }
   }
@@ -196,6 +207,7 @@ npm run worker:deploy # Deploy to Cloudflare
 ```
 
 See [REMOTE_SETUP.md](REMOTE_SETUP.md) for setup instructions for each web AI platform.
+For vessel migration architecture, see [AGENT_MESH.md](AGENT_MESH.md).
 
 When installed globally:
 ```bash
@@ -224,6 +236,30 @@ mindbridge
 3. **listReasoningModels**
    - Lists models optimized for reasoning tasks
    - No parameters required
+
+4. **registerVessel**
+   - Registers or updates a vessel host in the migration mesh
+   - Parameters: `vesselId`, `baseUrl`, optional endpoint/capabilities/protocols/Discord hooks
+
+5. **listVessels**
+   - Lists known vessels with capabilities and migration endpoints
+   - No parameters required
+
+6. **prepareAgentMigration**
+   - Creates a migration package with checksum + expiry
+   - Parameters: `agentId`, `sourceVesselId`, `targetVesselId`, `state`, optional `memoryRefs`, `ttlSeconds`
+
+7. **dispatchAgentMigration**
+   - Dispatches a prepared package to the target vessel over HTTP
+   - Parameters: `migrationId`, optional `includeState`, `dryRun`, webhook overrides
+
+8. **listAgentMigrations**
+   - Lists migration packages by status with limit controls
+   - Parameters: optional `status`, `limit`
+
+9. **announceAgentEvent**
+   - Sends arbitrary status updates to a Discord webhook/forum webhook
+   - Parameters: `content`, optional webhook URLs, `threadName`, metadata (`agentId`, `migrationId`)
 
 ## Example Usage 📝
 
@@ -262,6 +298,27 @@ mindbridge
   "prompt": "Explain the concept of eventual consistency in distributed systems",
   "temperature": 0.5,
   "maxTokens": 1500
+}
+
+// Register a vessel
+{
+  "vesselId": "vessel-alpha",
+  "baseUrl": "https://vessel-alpha.example.com",
+  "capabilities": ["memory", "planner", "discord-bridge"],
+  "protocols": ["mcp-json", "sse"],
+  "discordWebhookUrl": "https://discord.com/api/webhooks/..."
+}
+
+// Prepare and dispatch migration
+{
+  "agentId": "calyx",
+  "sourceVesselId": "vessel-alpha",
+  "targetVesselId": "vessel-beta",
+  "state": {
+    "task": "handoff to long-running vessel",
+    "traceId": "trace-123"
+  },
+  "ttlSeconds": 1200
 }
 ```
 

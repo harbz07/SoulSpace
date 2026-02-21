@@ -71,6 +71,14 @@ export interface OpenAICompatibleConfig {
   availableModels?: string[];
 }
 
+export interface AgentMeshConfig {
+  storagePath?: string;
+  defaultMigrationEndpointPath?: string;
+  migrationAuthToken?: string;
+  defaultDiscordWebhookUrl?: string;
+  defaultForumWebhookUrl?: string;
+}
+
 // Server configuration interface
 export interface ServerConfig {
   openai?: OpenAIConfig;
@@ -80,6 +88,7 @@ export interface ServerConfig {
   openrouter?: OpenRouterConfig;
   ollama?: OllamaConfig;
   openaiCompatible?: OpenAICompatibleConfig;
+  agentMesh?: AgentMeshConfig;
 }
 
 // Error types
