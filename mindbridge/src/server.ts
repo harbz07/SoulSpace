@@ -53,37 +53,39 @@ class MindBridgeServer extends McpServer {
     // Register getSecondOpinion tool
     this.tool('getSecondOpinion',
       'Get responses from various LLM providers',
-      GetSecondOpinionSchema.shape,
+      GetSecondOpinionSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
+          const validatedParams = GetSecondOpinionSchema.parse(params);
+
           // Validate provider exists
-          const providerName = params.provider.toLowerCase();
+          const providerName = validatedParams.provider.toLowerCase();
           if (!this.providerFactory.hasProvider(providerName)) {
             const availableProviders = this.providerFactory.getAvailableProviders();
             throw new Error(
-              `Provider "${params.provider}" not configured. Available providers: ${availableProviders.join(', ')}`
+              `Provider "${validatedParams.provider}" not configured. Available providers: ${availableProviders.join(', ')}`
             );
           }
 
           const provider = this.providerFactory.getProvider(providerName)!;
 
           // Validate model exists for provider
-          if (!provider.isValidModel(params.model)) {
+          if (!provider.isValidModel(validatedParams.model)) {
             const availableModels = provider.getAvailableModels();
             throw new Error(
-              `Model "${params.model}" not found for provider "${params.provider}". Available models: ${availableModels.join(', ')}`
+              `Model "${validatedParams.model}" not found for provider "${validatedParams.provider}". Available models: ${availableModels.join(', ')}`
             );
           }
 
           // Check reasoning effort compatibility
-          if (params.reasoning_effort && !provider.supportsReasoningEffort()) {
+          if (validatedParams.reasoning_effort && !provider.supportsReasoningEffort()) {
             console.warn(
-              `Warning: Provider "${params.provider}" does not support reasoning_effort parameter. It will be ignored.`
+              `Warning: Provider "${validatedParams.provider}" does not support reasoning_effort parameter. It will be ignored.`
             );
           }
 
           // Get response from provider
-          const result = await provider.getResponse(params);
+          const result = await provider.getResponse(validatedParams);
 
           if (result.isError) {
             return {
@@ -153,11 +155,12 @@ class MindBridgeServer extends McpServer {
     // Register registerVessel tool
     this.tool('registerVessel',
       'Register or update a vessel for agent migration',
-      RegisterVesselSchema.shape,
+      RegisterVesselSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
           await this.ensureAgentMeshReady();
-          const vessel = await this.agentMesh.registerVessel(params);
+          const validatedParams = RegisterVesselSchema.parse(params);
+          const vessel = await this.agentMesh.registerVessel(validatedParams);
           return {
             content: [{ type: 'text', text: JSON.stringify(vessel, null, 2) }]
           };
@@ -187,11 +190,12 @@ class MindBridgeServer extends McpServer {
     // Register prepareAgentMigration tool
     this.tool('prepareAgentMigration',
       'Create a migration package for an agent handoff',
-      CreateMigrationPackageSchema.shape,
+      CreateMigrationPackageSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
           await this.ensureAgentMeshReady();
-          const migration = await this.agentMesh.createMigrationPackage(params);
+          const validatedParams = CreateMigrationPackageSchema.parse(params);
+          const migration = await this.agentMesh.createMigrationPackage(validatedParams);
           return {
             content: [{ type: 'text', text: JSON.stringify(migration, null, 2) }]
           };
@@ -204,11 +208,12 @@ class MindBridgeServer extends McpServer {
     // Register dispatchAgentMigration tool
     this.tool('dispatchAgentMigration',
       'Dispatch a prepared migration package to target vessel',
-      DispatchMigrationSchema.shape,
+      DispatchMigrationSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
           await this.ensureAgentMeshReady();
-          const result = await this.agentMesh.dispatchMigration(params);
+          const validatedParams = DispatchMigrationSchema.parse(params);
+          const result = await this.agentMesh.dispatchMigration(validatedParams);
           return {
             content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
           };
@@ -221,14 +226,12 @@ class MindBridgeServer extends McpServer {
     // Register listAgentMigrations tool
     this.tool('listAgentMigrations',
       'List migration packages and statuses',
-      ListMigrationsSchema.shape,
+      ListMigrationsSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
           await this.ensureAgentMeshReady();
-          const migrations = this.agentMesh.listMigrations({
-            status: params.status,
-            limit: params.limit ?? 25
-          });
+          const validatedParams = ListMigrationsSchema.parse(params);
+          const migrations = this.agentMesh.listMigrations(validatedParams);
           return {
             content: [{ type: 'text', text: JSON.stringify(migrations, null, 2) }]
           };
@@ -241,11 +244,12 @@ class MindBridgeServer extends McpServer {
     // Register announceAgentEvent tool
     this.tool('announceAgentEvent',
       'Send an update to Discord webhook or forum webhook',
-      SendDiscordAnnouncementSchema.shape,
+      SendDiscordAnnouncementSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
           await this.ensureAgentMeshReady();
-          const results = await this.agentMesh.announceEvent(params);
+          const validatedParams = SendDiscordAnnouncementSchema.parse(params);
+          const results = await this.agentMesh.announceEvent(validatedParams);
           return {
             content: [{ type: 'text', text: JSON.stringify(results, null, 2) }]
           };

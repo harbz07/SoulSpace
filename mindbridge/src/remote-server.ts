@@ -17,7 +17,7 @@ type OpenAIChatRequest = {
 };
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
     // Health check
@@ -32,7 +32,7 @@ export default {
     if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
       let body: OpenAIChatRequest;
       try {
-        body = await request.json();
+        body = await request.json() as OpenAIChatRequest;
       } catch {
         return jsonError("Invalid JSON body", 400);
       }
