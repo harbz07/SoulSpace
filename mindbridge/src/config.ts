@@ -82,6 +82,15 @@ export function loadConfig(): ServerConfig {
     baseUrl: getBaseUrl('OLLAMA_BASE_URL', 'http://localhost:11434')
   };
 
+  // Agent Mesh Configuration (vessel hosting + migration + Discord hooks)
+  config.agentMesh = {
+    storagePath: getEnvVar('MINDBRIDGE_AGENT_MESH_STORAGE_PATH'),
+    defaultMigrationEndpointPath: getEnvVar('MINDBRIDGE_MIGRATION_ENDPOINT_PATH') || '/migrations/ingest',
+    migrationAuthToken: getEnvVar('MINDBRIDGE_MIGRATION_AUTH_TOKEN'),
+    defaultDiscordWebhookUrl: getEnvVar('MINDBRIDGE_DISCORD_WEBHOOK_URL'),
+    defaultForumWebhookUrl: getEnvVar('MINDBRIDGE_DISCORD_FORUM_WEBHOOK_URL')
+  };
+
   return config;
 }
 

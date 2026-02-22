@@ -22,6 +22,12 @@ const server = new MindBridgeServer();
     console.error('- getSecondOpinion: Get responses from various LLM providers');
     console.error('- listProviders: List all configured LLM providers and their models');
     console.error('- listReasoningModels: List models optimized for reasoning tasks\n');
+    console.error('- registerVessel: Register vessel endpoint + capabilities');
+    console.error('- listVessels: List known vessel registry entries');
+    console.error('- prepareAgentMigration: Build signed migration package');
+    console.error('- dispatchAgentMigration: Send package to target vessel');
+    console.error('- listAgentMigrations: Inspect migration package statuses');
+    console.error('- announceAgentEvent: Post Discord webhook/forum update\n');
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

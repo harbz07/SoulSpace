@@ -1,11 +1,20 @@
-import { ProviderFactory, PROVIDER_NAMES, REASONING_MODELS } from './providers/index.js';
+import { ProviderFactory, REASONING_MODELS } from './providers/index.js';
 import { loadConfig } from './config.js';
 import { GetSecondOpinionSchema } from './types.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
+import {
+  AgentMeshOrchestrator,
+  CreateMigrationPackageSchema,
+  DispatchMigrationSchema,
+  ListMigrationsSchema,
+  RegisterVesselSchema,
+  SendDiscordAnnouncementSchema,
+} from './agentMesh/index.js';
 
 class MindBridgeServer extends McpServer {
   private providerFactory: ProviderFactory;
+  private agentMesh: AgentMeshOrchestrator;
+  private agentMeshReady: Promise<void>;
 
   constructor() {
     super({
@@ -19,46 +28,64 @@ class MindBridgeServer extends McpServer {
 
     const config = loadConfig();
     this.providerFactory = new ProviderFactory(config);
+    this.agentMesh = new AgentMeshOrchestrator(config.agentMesh);
+    this.agentMeshReady = this.agentMesh.initialize().catch((error) => {
+      console.error('Failed to initialize Agent Mesh:', error);
+      throw error;
+    });
 
     // Register tools
     this.registerTools();
+  }
+
+  private async ensureAgentMeshReady(): Promise<void> {
+    await this.agentMeshReady;
+  }
+
+  private toolError(error: unknown): { content: { type: 'text'; text: string }[]; isError: true } {
+    return {
+      content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : 'An unknown error occurred'}` }],
+      isError: true
+    };
   }
 
   private registerTools(): void {
     // Register getSecondOpinion tool
     this.tool('getSecondOpinion',
       'Get responses from various LLM providers',
-      GetSecondOpinionSchema.shape,
+      GetSecondOpinionSchema.shape as unknown as Record<string, never>,
       async (params) => {
         try {
+          const validatedParams = GetSecondOpinionSchema.parse(params);
+
           // Validate provider exists
-          const providerName = params.provider.toLowerCase();
+          const providerName = validatedParams.provider.toLowerCase();
           if (!this.providerFactory.hasProvider(providerName)) {
             const availableProviders = this.providerFactory.getAvailableProviders();
             throw new Error(
-              `Provider "${params.provider}" not configured. Available providers: ${availableProviders.join(', ')}`
+              `Provider "${validatedParams.provider}" not configured. Available providers: ${availableProviders.join(', ')}`
             );
           }
 
           const provider = this.providerFactory.getProvider(providerName)!;
 
           // Validate model exists for provider
-          if (!provider.isValidModel(params.model)) {
+          if (!provider.isValidModel(validatedParams.model)) {
             const availableModels = provider.getAvailableModels();
             throw new Error(
-              `Model "${params.model}" not found for provider "${params.provider}". Available models: ${availableModels.join(', ')}`
+              `Model "${validatedParams.model}" not found for provider "${validatedParams.provider}". Available models: ${availableModels.join(', ')}`
             );
           }
 
           // Check reasoning effort compatibility
-          if (params.reasoning_effort && !provider.supportsReasoningEffort()) {
+          if (validatedParams.reasoning_effort && !provider.supportsReasoningEffort()) {
             console.warn(
-              `Warning: Provider "${params.provider}" does not support reasoning_effort parameter. It will be ignored.`
+              `Warning: Provider "${validatedParams.provider}" does not support reasoning_effort parameter. It will be ignored.`
             );
           }
 
           // Get response from provider
-          const result = await provider.getResponse(params);
+          const result = await provider.getResponse(validatedParams);
 
           if (result.isError) {
             return {
@@ -71,10 +98,7 @@ class MindBridgeServer extends McpServer {
             content: result.content
           };
         } catch (error) {
-          return {
-            content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : 'An unknown error occurred'}` }],
-            isError: true
-          };
+          return this.toolError(error);
         }
       }
     );
@@ -102,10 +126,7 @@ class MindBridgeServer extends McpServer {
             content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
           };
         } catch (error) {
-          return {
-            content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : 'An unknown error occurred'}` }],
-            isError: true
-          };
+          return this.toolError(error);
         }
       }
     );
@@ -126,10 +147,114 @@ class MindBridgeServer extends McpServer {
             }]
           };
         } catch (error) {
+          return this.toolError(error);
+        }
+      }
+    );
+
+    // Register registerVessel tool
+    this.tool('registerVessel',
+      'Register or update a vessel for agent migration',
+      RegisterVesselSchema.shape as unknown as Record<string, never>,
+      async (params) => {
+        try {
+          await this.ensureAgentMeshReady();
+          const validatedParams = RegisterVesselSchema.parse(params);
+          const vessel = await this.agentMesh.registerVessel(validatedParams);
           return {
-            content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : 'An unknown error occurred'}` }],
-            isError: true
+            content: [{ type: 'text', text: JSON.stringify(vessel, null, 2) }]
           };
+        } catch (error) {
+          return this.toolError(error);
+        }
+      }
+    );
+
+    // Register listVessels tool
+    this.tool('listVessels',
+      'List registered vessels and capabilities',
+      {},
+      async () => {
+        try {
+          await this.ensureAgentMeshReady();
+          const vessels = this.agentMesh.listVessels();
+          return {
+            content: [{ type: 'text', text: JSON.stringify(vessels, null, 2) }]
+          };
+        } catch (error) {
+          return this.toolError(error);
+        }
+      }
+    );
+
+    // Register prepareAgentMigration tool
+    this.tool('prepareAgentMigration',
+      'Create a migration package for an agent handoff',
+      CreateMigrationPackageSchema.shape as unknown as Record<string, never>,
+      async (params) => {
+        try {
+          await this.ensureAgentMeshReady();
+          const validatedParams = CreateMigrationPackageSchema.parse(params);
+          const migration = await this.agentMesh.createMigrationPackage(validatedParams);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(migration, null, 2) }]
+          };
+        } catch (error) {
+          return this.toolError(error);
+        }
+      }
+    );
+
+    // Register dispatchAgentMigration tool
+    this.tool('dispatchAgentMigration',
+      'Dispatch a prepared migration package to target vessel',
+      DispatchMigrationSchema.shape as unknown as Record<string, never>,
+      async (params) => {
+        try {
+          await this.ensureAgentMeshReady();
+          const validatedParams = DispatchMigrationSchema.parse(params);
+          const result = await this.agentMesh.dispatchMigration(validatedParams);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+          };
+        } catch (error) {
+          return this.toolError(error);
+        }
+      }
+    );
+
+    // Register listAgentMigrations tool
+    this.tool('listAgentMigrations',
+      'List migration packages and statuses',
+      ListMigrationsSchema.shape as unknown as Record<string, never>,
+      async (params) => {
+        try {
+          await this.ensureAgentMeshReady();
+          const validatedParams = ListMigrationsSchema.parse(params);
+          const migrations = this.agentMesh.listMigrations(validatedParams);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(migrations, null, 2) }]
+          };
+        } catch (error) {
+          return this.toolError(error);
+        }
+      }
+    );
+
+    // Register announceAgentEvent tool
+    this.tool('announceAgentEvent',
+      'Send an update to Discord webhook or forum webhook',
+      SendDiscordAnnouncementSchema.shape as unknown as Record<string, never>,
+      async (params) => {
+        try {
+          await this.ensureAgentMeshReady();
+          const validatedParams = SendDiscordAnnouncementSchema.parse(params);
+          const results = await this.agentMesh.announceEvent(validatedParams);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(results, null, 2) }]
+          };
+        } catch (error) {
+          return this.toolError(error);
         }
       }
     );

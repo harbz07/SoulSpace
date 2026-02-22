@@ -5,6 +5,21 @@ All notable changes to the Mindbridge MCP Server will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added ✨
+- Experimental Agent Mesh architecture for vessel-hosted agent migration
+- New MCP tools:
+  - `registerVessel`
+  - `listVessels`
+  - `prepareAgentMigration`
+  - `dispatchAgentMigration`
+  - `listAgentMigrations`
+  - `announceAgentEvent`
+- Optional JSON persistence for vessel + migration state via `MINDBRIDGE_AGENT_MESH_STORAGE_PATH`
+- Discord webhook/forum announcement support for migration events
+- New architecture guide: `AGENT_MESH.md`
+
 ## [1.1.0] - 2025-04-09
 
 ### Changed 🔄

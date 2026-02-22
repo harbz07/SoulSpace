@@ -11,7 +11,10 @@
         "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY_HERE",
         "GOOGLE_API_KEY": "GOOGLE_API_KEY_HERE",
         "DEEPSEEK_API_KEY": "DEEPSEEK_API_KEY_HERE",
-        "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_HERE"
+        "OPENROUTER_API_KEY": "OPENROUTER_API_KEY_HERE",
+        "MINDBRIDGE_AGENT_MESH_STORAGE_PATH": "/tmp/mindbridge-agent-mesh.json",
+        "MINDBRIDGE_DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/...",
+        "MINDBRIDGE_DISCORD_FORUM_WEBHOOK_URL": "https://discord.com/api/webhooks/..."
       },
       "provider_config": {
         "openai": {
@@ -47,7 +50,9 @@
       "alwaysAllow": [
         "getSecondOpinion",
         "listProviders",
-        "listReasoningModels"
+        "listReasoningModels",
+        "listVessels",
+        "listAgentMigrations"
       ]
     }
   }
