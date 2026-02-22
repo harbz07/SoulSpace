@@ -17,6 +17,10 @@ export interface Env {
   OPENAI_COMPATIBLE_API_MODELS?: string;
   DEEPSEEK_BASE_URL?: string;
   GOOGLE_BASE_URL?: string;
+  
+  // MindBridge Router backend
+  MINDBRIDGE_ROUTER_URL?: string;
+  MINDBRIDGE_API_KEY?: string;
 }
 
 function getBaseUrl(env: Env, key: keyof Env, defaultUrl: string): string {

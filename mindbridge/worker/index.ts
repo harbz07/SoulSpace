@@ -129,6 +129,16 @@ export default {
         });
       }
 
+      // OpenAI-compatible API: /v1/chat/completions
+      if (path === '/v1/chat/completions' && request.method === 'POST') {
+        return handleChatCompletion(request, env);
+      }
+
+      // OpenAI-compatible API: /v1/models
+      if (path === '/v1/models' && request.method === 'GET') {
+        return handleListModels(request, env);
+      }
+
       return jsonResponse({ error: 'Not found' }, 404);
     } catch (err) {
       console.error('MindBridge Worker error:', err);
@@ -139,6 +149,86 @@ export default {
     }
   },
 };
+
+/**
+ * Forward /v1/chat/completions to the MindBridge Router backend
+ */
+async function handleChatCompletion(request: Request, env: Env): Promise<Response> {
+  const MINDBRIDGE_ROUTER_URL = env.MINDBRIDGE_ROUTER_URL;
+  const MINDBRIDGE_API_KEY = env.MINDBRIDGE_API_KEY;
+
+  if (!MINDBRIDGE_ROUTER_URL || !MINDBRIDGE_API_KEY) {
+    return jsonResponse(
+      { error: 'MindBridge router is not configured. Set MINDBRIDGE_ROUTER_URL and MINDBRIDGE_API_KEY.' },
+      500
+    );
+  }
+
+  try {
+    const response = await fetch(`${MINDBRIDGE_ROUTER_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${MINDBRIDGE_API_KEY}`,
+      },
+      body: await request.text(),
+    });
+
+    // Forward the response from the router
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        'Content-Type': 'application/json',
+        ...CORS_HEADERS,
+      },
+    });
+  } catch (error) {
+    console.error('Error forwarding to MindBridge router:', error);
+    return jsonResponse(
+      { error: `Router error: ${error instanceof Error ? error.message : 'Unknown error'}` },
+      500
+    );
+  }
+}
+
+/**
+ * Forward /v1/models to the MindBridge Router backend
+ */
+async function handleListModels(request: Request, env: Env): Promise<Response> {
+  const MINDBRIDGE_ROUTER_URL = env.MINDBRIDGE_ROUTER_URL;
+  const MINDBRIDGE_API_KEY = env.MINDBRIDGE_API_KEY;
+
+  if (!MINDBRIDGE_ROUTER_URL || !MINDBRIDGE_API_KEY) {
+    return jsonResponse(
+      { error: 'MindBridge router is not configured. Set MINDBRIDGE_ROUTER_URL and MINDBRIDGE_API_KEY.' },
+      500
+    );
+  }
+
+  try {
+    const response = await fetch(`${MINDBRIDGE_ROUTER_URL}/v1/models`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${MINDBRIDGE_API_KEY}`,
+      },
+    });
+
+    // Forward the response from the router
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        'Content-Type': 'application/json',
+        ...CORS_HEADERS,
+      },
+    });
+  } catch (error) {
+    console.error('Error forwarding to MindBridge router:', error);
+    return jsonResponse(
+      { error: `Router error: ${error instanceof Error ? error.message : 'Unknown error'}` },
+      500
+    );
+  }
+}
 
 function openApiSpec(baseUrl: string) {
   return {
