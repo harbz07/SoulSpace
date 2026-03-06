@@ -1,0 +1,48 @@
+[Unit]
+Description=Calyx Discord Bot
+Documentation=https://github.com/yourusername/calyx
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=calyx
+Group=calyx
+WorkingDirectory=/var/www/calyx
+Environment=PATH=/var/www/calyx/venv/bin
+Environment=PYTHONPATH=/var/www/calyx
+EnvironmentFile=/var/www/calyx/.env
+
+# Run the bot
+ExecStart=/var/www/calyx/venv/bin/python /var/www/calyx/calyx.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy - more aggressive for a bot that should stay online
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=300s
+StartLimitBurst=5
+
+# Graceful shutdown - allow time for cleanup
+TimeoutStopSec=30
+KillSignal=SIGTERM
+KillMode=mixed
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=calyx
+
+# Create logs and tokens directories if they don't exist
+ExecStartPre=/bin/mkdir -p /var/www/calyx/logs /var/www/calyx/tokens
+ExecStartPre=/bin/chown calyx:calyx /var/www/calyx/logs /var/www/calyx/tokens
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/calyx/logs /var/www/calyx/tokens
+
+[Install]
+WantedBy=multi-user.target

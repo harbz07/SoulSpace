@@ -106,13 +106,15 @@ async def create_task(
                 "rich_text": [{"text": {"content": blocker_reason}}]
             }
         
-        notion.pages.create(
+        result = notion.pages.create(
             parent={"database_id": TASK_BOARD_ID},
             properties=properties
         )
         logger.info(f"Created task: {task_name}")
+        return result
     except Exception as e:
         logger.error(f"Failed to create task: {e}")
+        return None
 
 
 async def update_agent_health(

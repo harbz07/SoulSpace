@@ -994,6 +994,8 @@ async def trace(interaction: discord.Interaction, trace_id: str):
     name="status", description="Show all agent health + last execution times"
 )
 async def status(interaction: discord.Interaction):
+    # Defer response immediately since Notion queries may take >3 seconds
+    await interaction.response.defer()
     agents = await query_all_agent_health()
     embed = discord.Embed(
         title="Vessel System Status",
@@ -1039,13 +1041,15 @@ async def status(interaction: discord.Interaction):
             inline=False,
         )
     embed.set_footer(text="Use /pause to suspend operations, /resume to continue.")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 @bot.tree.command(
     name="pause", description="Temporarily suspend all automated triggers"
 )
 async def pause(interaction: discord.Interaction):
     global OPERATIONS_PAUSED
     trace_id = generate_trace_id()
+    # Defer response immediately since Notion operations may take >3 seconds
+    await interaction.response.defer()
     OPERATIONS_PAUSED = True
     await set_all_agents_status("Paused")
     await log_to_engine(
@@ -1066,11 +1070,13 @@ async def pause(interaction: discord.Interaction):
     )
     embed.add_field(name="Trace ID", value=f"{trace_id}", inline=True)
     embed.set_footer(text="Use /resume to re-enable operations.")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 @bot.tree.command(name="resume", description="Re-enable automated operations")
 async def resume(interaction: discord.Interaction):
     global OPERATIONS_PAUSED
     trace_id = generate_trace_id()
+    # Defer response immediately since Notion operations may take >3 seconds
+    await interaction.response.defer()
     OPERATIONS_PAUSED = False
     await set_all_agents_status("Active")
     await log_to_engine(
@@ -1094,7 +1100,7 @@ async def resume(interaction: discord.Interaction):
         color=discord.Color.green(),
     )
     embed.add_field(name="Trace ID", value=f"{trace_id}", inline=True)
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
 @bot.tree.command(
     name="purge", description="Delete specific memory (requires confirmation)"
 )
@@ -1103,7 +1109,7 @@ async def purge(interaction: discord.Interaction, memory_id: str):
     memory = await query_memory_archive(memory_id)
     if not memory:
         await interaction.response.send_message(
-            f"Memory {memory_id} not found in Memory Archive.\\n\\n"
+            f"Memory {memory_id} not found in Memory Archive.\n\n"
             "Check the Memory ID and try again.",
             ephemeral=True,
         )
@@ -1350,6 +1356,928 @@ async def execute_shell(interaction: discord.Interaction, command: str):
             bot, "Shell Execution System Error",
             f"Shell command crashed\\nTrace: {trace_id}\\nError: {str(e)}"
         )
+@bot.tree.command(name="ping", description="Check bot latency and system health")
+async def ping(interaction: discord.Interaction):
+    """Quick health check with latency metrics."""
+    trace_id = generate_trace_id()
+    start_time = datetime.now(timezone.utc)
+    
+    # Calculate Discord websocket latency
+    ws_latency = bot.latency * 1000  # Convert to ms
+    
+    # Test Notion connectivity
+    notion_status = "✅ Connected"
+    notion_latency = None
+    try:
+        notion_start = datetime.now(timezone.utc)
+        notion.users.me()
+        notion_latency = (datetime.now(timezone.utc) - notion_start).total_seconds() * 1000
+    except Exception as e:
+        notion_status = f"❌ Error: {str(e)[:50]}"
+    
+    # Calculate total response time
+    total_latency = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+    
+    # Create embed
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description="Calyx system health check",
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(name="Discord Latency", value=f"{ws_latency:.1f} ms", inline=True)
+    embed.add_field(name="Response Time", value=f"{total_latency:.1f} ms", inline=True)
+    embed.add_field(name="Notion", value=notion_status, inline=False)
+    if notion_latency:
+        embed.add_field(name="Notion Latency", value=f"{notion_latency:.1f} ms", inline=True)
+    embed.add_field(name="Trace ID", value=trace_id, inline=True)
+    embed.set_footer(text=f"Calyx v1.0 | Uptime: {start_time.strftime('%Y-%m-%d %H:%M UTC')}")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+    
+    # Log the ping
+    await log_to_engine(
+        bot, trace_id, "Health check (ping)",
+        ["HealthMonitor"], ["System"],
+        f"Discord: {ws_latency:.1f}ms | Notion: {notion_latency:.1f}ms" if notion_latency else "Discord only",
+        success=True
+    )
+    await create_trace_log(
+        trace_id, "Health check ping", ["HealthMonitor"], ["System"], True
+    )
+
+
+@bot.tree.command(name="remember", description="Save a memory to the Memory Archive")
+@app_commands.describe(
+    content="The memory to save",
+    memory_type="Type of memory (optional)",
+    retention="How long to keep this memory (optional)"
+)
+@app_commands.choices(
+    memory_type=[
+        app_commands.Choice(name="insight", value="Insight"),
+        app_commands.Choice(name="conversation", value="Conversation"),
+        app_commands.Choice(name="observation", value="Observation"),
+        app_commands.Choice(name="reference", value="Reference"),
+    ],
+    retention=[
+        app_commands.Choice(name="7 days", value="7 Days"),
+        app_commands.Choice(name="30 days", value="30 Days"),
+        app_commands.Choice(name="1 year", value="1 Year"),
+        app_commands.Choice(name="permanent", value="Permanent"),
+    ]
+)
+async def remember(
+    interaction: discord.Interaction,
+    content: str,
+    memory_type: str = "Insight",
+    retention: str = "Permanent"
+):
+    """Save a memory to Notion Memory Archive."""
+    await interaction.response.defer(ephemeral=True)
+    trace_id = generate_trace_id()
+    
+    if not notion:
+        await interaction.followup.send(
+            "❌ Notion integration is not available.", ephemeral=True
+        )
+        return
+    
+    try:
+        # Create memory in Notion
+        memory_id = f"MEM-{uuid.uuid4().hex[:8].upper()}"
+        notion.pages.create(
+            parent={"database_id": NOTION_MEMORY_ARCHIVE_ID},
+            properties={
+                "Memory ID": {"title": [{"text": {"content": memory_id}}]},
+                "Type": {"select": {"name": memory_type}},
+                "Consent Status": {"select": {"name": "Explicit"}},
+                "Created Date": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
+                "Last Accessed": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
+                "Access Count": {"number": 1},
+                "Retention Policy": {"select": {"name": retention}},
+                "Content Preview": {
+                    "rich_text": [{"text": {"content": content[:500]}}]
+                },
+            }
+        )
+        
+        # Create embed response
+        embed = discord.Embed(
+            title="🧠 Memory Saved",
+            description=f"Saved to Memory Archive",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="Memory ID", value=memory_id, inline=True)
+        embed.add_field(name="Type", value=memory_type, inline=True)
+        embed.add_field(name="Retention", value=retention, inline=True)
+        embed.add_field(name="Content", value=f"{content[:500]}{'...' if len(content) > 500 else ''}", inline=False)
+        embed.add_field(name="Trace ID", value=trace_id, inline=True)
+        embed.set_footer(text="Use /purge to delete this memory if needed")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        # Log to engine
+        await log_to_engine(
+            bot, trace_id, f"Memory saved: {memory_id}",
+            ["MemoryManager"], ["Memory Archive"],
+            f"Type: {memory_type}, Retention: {retention}",
+            success=True
+        )
+        await create_trace_log(
+            trace_id, "Save memory", ["MemoryManager"], ["Memory Archive"], True
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to save memory: {e}")
+        await log_to_scream(bot, "MEMORY_SAVE_FAILED", str(e)[:200], f"Trace: {trace_id}")
+        await interaction.followup.send(
+            f"❌ Failed to save memory. Check #the-scream for details.\nTrace: {trace_id}",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="task", description="Create a new task in the Task Board")
+@app_commands.describe(
+    name="Name of the task",
+    priority="Task priority (default: Medium)",
+    assigned_to="Who should do this (default: Calyx)"
+)
+@app_commands.choices(
+    priority=[
+        app_commands.Choice(name="Critical", value="Critical"),
+        app_commands.Choice(name="High", value="High"),
+        app_commands.Choice(name="Medium", value="Medium"),
+        app_commands.Choice(name="Low", value="Low"),
+    ],
+    assigned_to=[
+        app_commands.Choice(name="tinyNature", value="tinyNature"),
+        app_commands.Choice(name="Calyx", value="Calyx"),
+        app_commands.Choice(name="Harvey", value="Harvey"),
+        app_commands.Choice(name="Claude", value="Claude"),
+        app_commands.Choice(name="Other", value="Other"),
+    ]
+)
+async def task(
+    interaction: discord.Interaction,
+    name: str,
+    priority: str = "Medium",
+    assigned_to: str = "Calyx"
+):
+    """Create a task in Notion Task Board."""
+    await interaction.response.defer(ephemeral=True)
+    trace_id = generate_trace_id()
+    
+    # Use the existing create_task function
+    result = await create_task(
+        task_name=name,
+        status="To-Do",
+        priority=priority,
+        assigned_to=assigned_to,
+        trigger_source="Manual",
+        trace_link=None
+    )
+    
+    success = result is not None
+    
+    if success:
+        # Color based on priority
+        color_map = {
+            "Critical": discord.Color.dark_red(),
+            "High": discord.Color.red(),
+            "Medium": discord.Color.orange(),
+            "Low": discord.Color.green(),
+        }
+        
+        embed = discord.Embed(
+            title="✅ Task Created",
+            description=f"Added to Task Board",
+            color=color_map.get(priority, discord.Color.blue()),
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="Task", value=name, inline=False)
+        embed.add_field(name="Priority", value=priority, inline=True)
+        embed.add_field(name="Assigned To", value=assigned_to, inline=True)
+        embed.add_field(name="Status", value="To-Do", inline=True)
+        embed.add_field(name="Trace ID", value=trace_id, inline=False)
+        embed.set_footer(text="View in Notion Task Board")
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+        # Log to engine
+        discord_msg = await log_to_engine(
+            bot, trace_id, f"Task created: {name}",
+            ["TaskManager"], ["Task Board"],
+            f"Priority: {priority}, Assigned: {assigned_to}",
+            success=True
+        )
+        await create_trace_log(
+            trace_id, "Create task", ["TaskManager"], ["Task Board"], True,
+            discord_link=discord_msg.jump_url if discord_msg else ""
+        )
+    else:
+        await interaction.followup.send(
+            f"❌ Failed to create task. Check #the-scream for details.\nTrace: {trace_id}",
+            ephemeral=True
+        )
+        await log_to_scream(bot, "TASK_CREATE_FAILED", f"Failed to create: {name}", f"Trace: {trace_id}")
+
+
+# =============================================================================
+# AGENT MESH - DISCORD COMMANDS
+# =============================================================================
+import aiohttp
+
+MINDBRIDGE_HTTP_URL = os.getenv("MINDBRIDGE_HTTP_URL", "http://localhost:3001")
+MINDBRIDGE_HTTP_TOKEN = os.getenv("MINDBRIDGE_HTTP_TOKEN", "")
+
+async def mindbridge_api(method: str, endpoint: str, data: dict = None) -> dict:
+    """Call MindBridge HTTP API."""
+    url = f"{MINDBRIDGE_HTTP_URL}{endpoint}"
+    headers = {"Content-Type": "application/json"}
+    if MINDBRIDGE_HTTP_TOKEN:
+        headers["Authorization"] = f"Bearer {MINDBRIDGE_HTTP_TOKEN}"
+    
+    async with aiohttp.ClientSession() as session:
+        if method == "GET":
+            async with session.get(url, headers=headers) as resp:
+                return {"status": resp.status, "data": await resp.json()}
+        elif method == "POST":
+            async with session.post(url, headers=headers, json=data) as resp:
+                return {"status": resp.status, "data": await resp.json()}
+
+
+@bot.tree.command(name="vessel", description="Manage Agent Mesh vessels")
+@app_commands.describe(
+    action="Action to perform",
+    vessel_id="Vessel identifier (e.g., vessel-alpha)",
+    base_url="Base URL of the vessel",
+    capabilities="Comma-separated capabilities (e.g., mcp,discord)"
+)
+@app_commands.choices(
+    action=[
+        app_commands.Choice(name="register", value="register"),
+        app_commands.Choice(name="list", value="list"),
+    ]
+)
+async def vessel(
+    interaction: discord.Interaction,
+    action: str,
+    vessel_id: str = None,
+    base_url: str = None,
+    capabilities: str = ""
+):
+    """Manage Agent Mesh vessels via MindBridge."""
+    await interaction.response.defer(ephemeral=True)
+    trace_id = generate_trace_id()
+    
+    try:
+        if action == "list":
+            result = await mindbridge_api("GET", "/vessels")
+            if result["status"] == 200 and result["data"].get("success"):
+                vessels = result["data"]["vessels"]
+                if not vessels:
+                    await interaction.followup.send("No vessels registered.", ephemeral=True)
+                    return
+                
+                embed = discord.Embed(
+                    title="🚢 Registered Vessels",
+                    description=f"Found {len(vessels)} vessel(s)",
+                    color=discord.Color.blue()
+                )
+                for v in vessels:
+                    caps = ", ".join(v.get("capabilities", [])) or "None"
+                    embed.add_field(
+                        name=v["vesselId"],
+                        value=f"URL: {v['baseUrl']}\nCapabilities: {caps}",
+                        inline=False
+                    )
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"❌ Failed to list vessels: {result['data'].get('error', 'Unknown error')}",
+                    ephemeral=True
+                )
+        
+        elif action == "register":
+            if not vessel_id or not base_url:
+                await interaction.followup.send(
+                    "❌ vessel_id and base_url are required for registration.",
+                    ephemeral=True
+                )
+                return
+            
+            caps = [c.strip() for c in capabilities.split(",") if c.strip()]
+            result = await mindbridge_api("POST", "/vessels", {
+                "vesselId": vessel_id,
+                "baseUrl": base_url,
+                "capabilities": caps
+            })
+            
+            if result["status"] == 201 and result["data"].get("success"):
+                v = result["data"]["vessel"]
+                embed = discord.Embed(
+                    title="✅ Vessel Registered",
+                    description=f"Successfully registered **{v['vesselId']}**",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Base URL", value=v["baseUrl"], inline=False)
+                embed.add_field(name="Capabilities", value=", ".join(v.get("capabilities", [])) or "None", inline=False)
+                embed.add_field(name="Endpoint", value=v["migrationEndpointPath"], inline=False)
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"❌ Failed to register vessel: {result['data'].get('error', 'Unknown error')}",
+                    ephemeral=True
+                )
+    
+    except Exception as e:
+        logger.error(f"Vessel command error: {e}")
+        await interaction.followup.send(
+            f"❌ Error: {str(e)[:200]}\nTrace: {trace_id}",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="migrate", description="Manage Agent Mesh migrations")
+@app_commands.describe(
+    action="Action to perform",
+    agent_id="Agent to migrate (e.g., calyx)",
+    source="Source vessel ID",
+    target="Target vessel ID",
+    migration_id="Migration ID (for dispatch)"
+)
+@app_commands.choices(
+    action=[
+        app_commands.Choice(name="prepare", value="prepare"),
+        app_commands.Choice(name="dispatch", value="dispatch"),
+        app_commands.Choice(name="list", value="list"),
+    ]
+)
+async def migrate(
+    interaction: discord.Interaction,
+    action: str,
+    agent_id: str = None,
+    source: str = None,
+    target: str = None,
+    migration_id: str = None
+):
+    """Manage Agent Mesh migrations via MindBridge."""
+    await interaction.response.defer(ephemeral=True)
+    trace_id = generate_trace_id()
+    
+    try:
+        if action == "list":
+            result = await mindbridge_api("GET", "/migrations")
+            if result["status"] == 200 and result["data"].get("success"):
+                migrations = result["data"]["migrations"]
+                if not migrations:
+                    await interaction.followup.send("No migrations found.", ephemeral=True)
+                    return
+                
+                embed = discord.Embed(
+                    title="📦 Migrations",
+                    description=f"Found {len(migrations)} migration(s)",
+                    color=discord.Color.blue()
+                )
+                for m in migrations[:5]:  # Show max 5
+                    status_emoji = {"prepared": "📋", "dispatched": "🚀", "completed": "✅", "failed": "❌"}.get(m["status"], "❓")
+                    embed.add_field(
+                        name=f"{status_emoji} {m['migrationId'][:8]}...",
+                        value=f"Agent: {m['agentId']}\n{source} → {target}\nStatus: {m['status']}",
+                        inline=True
+                    )
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"❌ Failed to list migrations: {result['data'].get('error', 'Unknown error')}",
+                    ephemeral=True
+                )
+        
+        elif action == "prepare":
+            if not agent_id or not source or not target:
+                await interaction.followup.send(
+                    "❌ agent_id, source, and target are required.",
+                    ephemeral=True
+                )
+                return
+            
+            result = await mindbridge_api("POST", "/migrations", {
+                "agentId": agent_id,
+                "sourceVesselId": source,
+                "targetVesselId": target,
+                "state": {"requestedBy": interaction.user.name, "traceId": trace_id},
+                "ttlSeconds": 3600
+            })
+            
+            if result["status"] == 201 and result["data"].get("success"):
+                m = result["data"]["migration"]
+                embed = discord.Embed(
+                    title="📦 Migration Prepared",
+                    description=f"Ready to migrate **{m['agentId']}**",
+                    color=discord.Color.orange()
+                )
+                embed.add_field(name="Migration ID", value=m["migrationId"], inline=False)
+                embed.add_field(name="Source", value=m["sourceVesselId"], inline=True)
+                embed.add_field(name="Target", value=m["targetVesselId"], inline=True)
+                embed.add_field(name="Expires", value=m["expiresAt"][:19].replace("T", " "), inline=False)
+                embed.add_field(name="Next Step", value=f"`/migrate action:dispatch migration_id:{m['migrationId']}`", inline=False)
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"❌ Failed to prepare migration: {result['data'].get('error', 'Unknown error')}",
+                    ephemeral=True
+                )
+        
+        elif action == "dispatch":
+            if not migration_id:
+                await interaction.followup.send(
+                    "❌ migration_id is required for dispatch.",
+                    ephemeral=True
+                )
+                return
+            
+            result = await mindbridge_api("POST", "/migrations/dispatch", {
+                "migrationId": migration_id
+            })
+            
+            if result["status"] == 200 and result["data"].get("success"):
+                r = result["data"]["result"]
+                embed = discord.Embed(
+                    title="🚀 Migration Dispatched",
+                    description=f"Migration **{migration_id[:8]}...** sent",
+                    color=discord.Color.green() if r["status"] == "completed" else discord.Color.orange()
+                )
+                embed.add_field(name="Status", value=r["status"], inline=True)
+                embed.add_field(name="Target URL", value=r["targetUrl"][:50] + "...", inline=False)
+                if r.get("announcements"):
+                    embed.add_field(name="Notifications", value=f"{len(r['announcements'])} sent", inline=True)
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(
+                    f"❌ Failed to dispatch: {result['data'].get('error', 'Unknown error')}",
+                    ephemeral=True
+                )
+    
+    except Exception as e:
+        logger.error(f"Migrate command error: {e}")
+        await interaction.followup.send(
+            f"❌ Error: {str(e)[:200]}\nTrace: {trace_id}",
+            ephemeral=True
+        )
+
+
+# =============================================================================
+# CONVERSATION MEMORY
+# =============================================================================
+class ConversationMemory:
+    """Simple in-memory conversation store with Notion persistence."""
+    
+    def __init__(self, max_history=10):
+        self.conversations = {}  # user_id -> list of messages
+        self.max_history = max_history
+    
+    def get_history(self, user_id: str) -> list:
+        """Get conversation history for a user."""
+        return self.conversations.get(user_id, [])
+    
+    def add_message(self, user_id: str, role: str, content: str):
+        """Add a message to user's history."""
+        if user_id not in self.conversations:
+            self.conversations[user_id] = []
+        
+        self.conversations[user_id].append({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Trim old messages
+        if len(self.conversations[user_id]) > self.max_history:
+            self.conversations[user_id] = self.conversations[user_id][-self.max_history:]
+    
+    def clear_history(self, user_id: str):
+        """Clear conversation history."""
+        self.conversations.pop(user_id, None)
+    
+    def format_for_llm(self, user_id: str) -> list:
+        """Format history for LLM API (OpenAI/MindBridge format)."""
+        history = self.get_history(user_id)
+        return [{"role": msg["role"], "content": msg["content"]} for msg in history]
+
+
+# Global conversation memory
+conversation_memory = ConversationMemory(max_history=20)
+
+
+async def save_conversation_to_notion(user_id: str, user_name: str, summary: str):
+    """Save conversation summary to Notion Memory Archive."""
+    try:
+        history = conversation_memory.get_history(user_id)
+        if not history:
+            return
+        
+        # Create a memory entry
+        memory_content = f"Conversation with {user_name}\n\nSummary: {summary}\n\n"
+        memory_content += f"Messages: {len(history)}"
+        
+        notion.pages.create(
+            parent={"database_id": NOTION_MEMORY_ARCHIVE_ID},
+            properties={
+                "Memory ID": {"title": [{"text": {"content": f"CONV-{user_id[:8]}-{datetime.now(timezone.utc).strftime('%Y%m%d')}"}}]},
+                "Type": {"select": {"name": "Conversation"}},
+                "Consent Status": {"select": {"name": "Explicit"}},
+                "Created Date": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
+                "Last Accessed": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
+                "Access Count": {"number": 1},
+                "Retention Policy": {"select": {"name": "30 Days"}},
+                "Content Preview": {"rich_text": [{"text": {"content": summary[:500]}}]},
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to save conversation: {e}")
+
+
+# =============================================================================
+# LLM CHAT COMMANDS
+# =============================================================================
+@bot.tree.command(name="ask", description="Ask an AI assistant (Claude, GPT, etc.)")
+@app_commands.describe(
+    question="Your question or prompt",
+    provider="Which AI to use (default: auto)",
+    model="Specific model (optional)",
+    context="Include conversation history?"
+)
+@app_commands.choices(
+    provider=[
+        app_commands.Choice(name="Auto", value="auto"),
+        app_commands.Choice(name="Claude", value="anthropic"),
+        app_commands.Choice(name="GPT-4", value="openai"),
+        app_commands.Choice(name="GPT-3.5", value="openai-gpt3"),
+        app_commands.Choice(name="Local (Ollama)", value="ollama"),
+    ],
+    context=[
+        app_commands.Choice(name="Yes", value="yes"),
+        app_commands.Choice(name="No", value="no"),
+    ]
+)
+async def ask(
+    interaction: discord.Interaction,
+    question: str,
+    provider: str = "auto",
+    model: str = "",
+    context: str = "yes"
+):
+    """Ask an AI assistant via MindBridge."""
+    await interaction.response.defer(ephemeral=False, thinking=True)
+    trace_id = generate_trace_id()
+    user_id = str(interaction.user.id)
+    
+    try:
+        # Build message history
+        messages = []
+        if context == "yes":
+            history = conversation_memory.format_for_llm(user_id)
+            # Add system prompt if no history
+            if not history:
+                messages.append({
+                    "role": "system",
+                    "content": "You are Calyx, a helpful AI assistant. Be concise but thorough."
+                })
+            else:
+                messages.extend(history)
+        else:
+            messages.append({
+                "role": "system",
+                "content": "You are Calyx, a helpful AI assistant. Be concise but thorough."
+            })
+        
+        # Add user question
+        messages.append({"role": "user", "content": question})
+        
+        # Determine model based on provider
+        model_map = {
+            "auto": "claude-3-sonnet-20240229",
+            "anthropic": "claude-3-sonnet-20240229",
+            "openai": "gpt-4",
+            "openai-gpt3": "gpt-3.5-turbo",
+            "ollama": "llama2"
+        }
+        selected_model = model if model else model_map.get(provider, "claude-3-sonnet-20240229")
+        
+        # Call MindBridge
+        result = await mindbridge_api("POST", "/chat", {
+            "provider": provider if provider != "auto" else "anthropic",
+            "model": selected_model,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 2000
+        })
+        
+        if result["status"] == 200 and result["data"].get("content"):
+            response_text = result["data"]["content"]
+            
+            # Store in conversation memory
+            conversation_memory.add_message(user_id, "user", question)
+            conversation_memory.add_message(user_id, "assistant", response_text)
+            
+            # Create embed response
+            embed = discord.Embed(
+                title="🤖 AI Response",
+                description=response_text[:4000],
+                color=discord.Color.blue(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="Provider", value=provider.capitalize(), inline=True)
+            embed.add_field(name="Model", value=selected_model, inline=True)
+            if context == "yes":
+                history_len = len(conversation_memory.get_history(user_id)) // 2
+                embed.add_field(name="Context", value=f"{history_len} exchanges", inline=True)
+            embed.set_footer(text=f"Trace: {trace_id} • /ask to continue")
+            
+            await interaction.followup.send(embed=embed)
+            
+            # Log to engine
+            await log_to_engine(
+                bot, trace_id, f"AI Chat: {question[:50]}...",
+                ["LLM", provider.capitalize()], ["MindBridge"],
+                f"Response: {response_text[:100]}...",
+                success=True
+            )
+            
+        else:
+            error_msg = result["data"].get("error", "Unknown error")
+            await interaction.followup.send(
+                f"❌ AI request failed: {error_msg}\nTrace: {trace_id}",
+                ephemeral=True
+            )
+            await log_to_scream(bot, "LLM_REQUEST_FAILED", error_msg, f"Trace: {trace_id}")
+    
+    except Exception as e:
+        logger.error(f"Ask command error: {e}")
+        await interaction.followup.send(
+            f"❌ Error: {str(e)[:200]}\nTrace: {trace_id}",
+            ephemeral=True
+        )
+        await log_to_scream(bot, "ASK_COMMAND_ERROR", str(e)[:200], f"Trace: {trace_id}")
+
+
+@bot.tree.command(name="forget", description="Clear your conversation history with the AI")
+async def forget(interaction: discord.Interaction):
+    """Clear conversation history."""
+    user_id = str(interaction.user.id)
+    conversation_memory.clear_history(user_id)
+    
+    embed = discord.Embed(
+        title="🧹 Memory Cleared",
+        description="Your conversation history has been erased.",
+        color=discord.Color.green()
+    )
+    embed.set_footer(text="Start fresh with /ask")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="think", description="Have the AI think step-by-step (reasoning mode)")
+@app_commands.describe(
+    problem="The problem to solve or question to analyze",
+    depth="How deep to think (brief/thorough/deep)"
+)
+@app_commands.choices(
+    depth=[
+        app_commands.Choice(name="Brief", value="low"),
+        app_commands.Choice(name="Thorough", value="medium"),
+        app_commands.Choice(name="Deep Analysis", value="high"),
+    ]
+)
+async def think(
+    interaction: discord.Interaction,
+    problem: str,
+    depth: str = "medium"
+):
+    """Use reasoning-optimized models for complex problems."""
+    await interaction.response.defer(ephemeral=False, thinking=True)
+    trace_id = generate_trace_id()
+    user_id = str(interaction.user.id)
+    
+    try:
+        # Use reasoning model
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an analytical AI. Think step-by-step and show your reasoning."
+            },
+            {"role": "user", "content": f"Please think through this carefully:\n\n{problem}"}
+        ]
+        
+        result = await mindbridge_api("POST", "/chat", {
+            "provider": "anthropic",
+            "model": "claude-3-opus-20240229",  # Best reasoning model
+            "messages": messages,
+            "temperature": 0.3,  # Lower for more focused reasoning
+            "max_tokens": 4000,
+            "reasoning_effort": depth
+        })
+        
+        if result["status"] == 200 and result["data"].get("content"):
+            response_text = result["data"]["content"]
+            
+            # Store in memory
+            conversation_memory.add_message(user_id, "user", f"[Think] {problem}")
+            conversation_memory.add_message(user_id, "assistant", response_text)
+            
+            # Split long responses
+            if len(response_text) > 4000:
+                parts = [response_text[i:i+4000] for i in range(0, len(response_text), 4000)]
+                embed = discord.Embed(
+                    title="🧠 Deep Analysis (Part 1)",
+                    description=parts[0],
+                    color=discord.Color.purple()
+                )
+                embed.add_field(name="Depth", value=depth.capitalize(), inline=True)
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed)
+                
+                for i, part in enumerate(parts[1:], 2):
+                    await interaction.followup.send(
+                        embed=discord.Embed(
+                            title=f"🧠 Part {i}",
+                            description=part,
+                            color=discord.Color.purple()
+                        )
+                    )
+            else:
+                embed = discord.Embed(
+                    title="🧠 Analysis",
+                    description=response_text,
+                    color=discord.Color.purple()
+                )
+                embed.add_field(name="Depth", value=depth.capitalize(), inline=True)
+                embed.add_field(name="Model", value="Claude 3 Opus", inline=True)
+                embed.set_footer(text=f"Trace: {trace_id}")
+                await interaction.followup.send(embed=embed)
+        else:
+            error_msg = result["data"].get("error", "Unknown error")
+            await interaction.followup.send(f"❌ Analysis failed: {error_msg}", ephemeral=True)
+    
+    except Exception as e:
+        logger.error(f"Think command error: {e}")
+        await interaction.followup.send(f"❌ Error: {str(e)[:200]}", ephemeral=True)
+
+
+# =============================================================================
+# AUTO-RESPOND MODE (for specific channels)
+# =============================================================================
+AUTO_RESPOND_CHANNELS = set()  # Channel IDs where bot auto-responds
+
+@bot.tree.command(name="autorespond", description="Toggle AI auto-respond in this channel")
+@app_commands.describe(mode="Enable or disable")
+@app_commands.choices(
+    mode=[
+        app_commands.Choice(name="Enable", value="on"),
+        app_commands.Choice(name="Disable", value="off"),
+        app_commands.Choice(name="Status", value="status"),
+    ]
+)
+async def autorespond(interaction: discord.Interaction, mode: str):
+    """Toggle automatic AI responses in the current channel."""
+    channel_id = interaction.channel_id
+    
+    if mode == "on":
+        AUTO_RESPOND_CHANNELS.add(channel_id)
+        embed = discord.Embed(
+            title="🤖 Auto-Respond Enabled",
+            description="I'll automatically respond to messages in this channel.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Trigger", value="Any message", inline=True)
+        embed.add_field(name="Context", value="Per-user memory", inline=True)
+        embed.set_footer(text="Use /autorespond mode:disable to turn off")
+        await interaction.response.send_message(embed=embed)
+    
+    elif mode == "off":
+        AUTO_RESPOND_CHANNELS.discard(channel_id)
+        await interaction.response.send_message(
+            "🤖 Auto-respond disabled for this channel.",
+            ephemeral=True
+        )
+    
+    else:  # status
+        status = "enabled" if channel_id in AUTO_RESPOND_CHANNELS else "disabled"
+        await interaction.response.send_message(
+            f"Auto-respond is **{status}** in this channel.",
+            ephemeral=True
+        )
+
+
+@bot.event
+async def on_message(message):
+    """Handle auto-respond messages."""
+    # Skip if not in auto-respond channel
+    if message.channel.id not in AUTO_RESPOND_CHANNELS:
+        await bot.process_commands(message)
+        return
+    
+    # Skip bot messages and commands
+    if message.author.bot or message.content.startswith('/'):
+        await bot.process_commands(message)
+        return
+    
+    # Skip if it's a command invocation
+    ctx = await bot.get_context(message)
+    if ctx.valid:
+        await bot.process_commands(message)
+        return
+    
+    # Auto-respond with AI
+    try:
+        user_id = str(message.author.id)
+        
+        # Build context
+        history = conversation_memory.format_for_llm(user_id)
+        messages = [{"role": "system", "content": "You are Calyx, helpful and concise."}]
+        if history:
+            messages.extend(history[-6:])  # Last 3 exchanges
+        messages.append({"role": "user", "content": message.content})
+        
+        # Quick async call to MindBridge
+        async with aiohttp.ClientSession() as session:
+            headers = {"Content-Type": "application/json"}
+            if MINDBRIDGE_HTTP_TOKEN:
+                headers["Authorization"] = f"Bearer {MINDBRIDGE_HTTP_TOKEN}"
+            
+            async with session.post(
+                f"{MINDBRIDGE_HTTP_URL}/chat",
+                headers=headers,
+                json={
+                    "provider": "anthropic",
+                    "model": "claude-3-haiku-20240307",  # Fast model for chat
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 500
+                },
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("content"):
+                        response_text = data["content"]
+                        conversation_memory.add_message(user_id, "user", message.content)
+                        conversation_memory.add_message(user_id, "assistant", response_text)
+                        await message.reply(response_text[:2000])
+    
+    except Exception as e:
+        logger.error(f"Auto-respond error: {e}")
+    
+    await bot.process_commands(message)
+
+
+# =============================================================================
+# SIGNAL HANDLING FOR SYSTEMD
+# =============================================================================
+import signal
+import sys
+
+shutdown_event = asyncio.Event()
+
+def handle_signal(sig, frame):
+    """Handle shutdown signals gracefully for systemd."""
+    logger.info(f"Received signal {sig}, initiating graceful shutdown...")
+    shutdown_event.set()
+    
+    # Close the bot
+    async def shutdown():
+        try:
+            if health_server:
+                await health_server.stop()
+                logger.info("Health server stopped")
+            await bot.close()
+            logger.info("Bot connection closed")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+    
+    # Run shutdown
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(shutdown())
+        else:
+            loop.run_until_complete(shutdown())
+    except Exception as e:
+        logger.error(f"Shutdown error: {e}")
+    finally:
+        sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, handle_signal)
+signal.signal(signal.SIGINT, handle_signal)
+
+
 # =============================================================================
 # RUN BOT
 # =============================================================================
@@ -1358,5 +2286,17 @@ if __name__ == "__main__":
         logger.error("ERROR: DISCORD_TOKEN not found in .env")
         exit(1)
     if not NOTION_TOKEN:
-        logger.warning("WARNING: NOTION_TOKEN not configured. Notion features will be disabled.")
-    bot.run(TOKEN)
+        logger.warning("WARNING: NOTION_TOKEN configured. Notion features will be disabled.")
+    
+    logger.info("Starting Calyx bot...")
+    logger.info("PID: %s", os.getpid())
+    logger.info("Press Ctrl+C or send SIGTERM to stop")
+    
+    try:
+        bot.run(TOKEN, log_handler=None)
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+        handle_signal(signal.SIGINT, None)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)

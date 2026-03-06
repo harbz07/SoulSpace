@@ -1,0 +1,43 @@
+[Unit]
+Description=MindBridge HTTP Server for Calyx
+Documentation=https://github.com/pinkpixel-dev/mindbridge
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=calyx
+Group=calyx
+WorkingDirectory=/var/www/calyx/mindbridge
+Environment=PATH=/usr/bin
+Environment=NODE_ENV=production
+Environment=MINDBRIDGE_HTTP_PORT=3001
+EnvironmentFile=/var/www/calyx/.env
+
+# Run the server
+ExecStart=/usr/bin/node /var/www/calyx/mindbridge/dist/http-server.js
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Graceful shutdown
+TimeoutStopSec=10
+KillSignal=SIGTERM
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mindbridge
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/calyx/mindbridge
+
+[Install]
+WantedBy=multi-user.target
